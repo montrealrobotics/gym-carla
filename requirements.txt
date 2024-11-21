@@ -1,3 +1,7 @@
 gym==0.12.5
 pygame==1.9.6
 scikit-image==0.16.2
+torch==1.4.0
+stable-baselines3==0.8.0
+protobuf==3.6.1
+tyro==0.9.1
