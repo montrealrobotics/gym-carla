@@ -13,14 +13,24 @@ class BirdviewWrapper(gym.Wrapper):
              'birdeye': env.observation_space['birdeye']})
         
         super(BirdviewWrapper, self).__init__(env)
+        
+        self.episodic_return = 0.0
+        self.episode_steps = 0.0
     
     def reset(self):
         observation = self.env.reset()
+        self.episodic_return = 0.0
+        self.episode_steps = 0.0
         return self.process_obs(observation)
 
     def step(self, action):
         observation, reward, done, info = self.env.step(action)
         obs = self.process_obs(observation)
+        self.episodic_return += reward
+        self.episode_steps += 1.0
+        
+        info["final_info"] = {"episode":{"r": self.episodic_return, "l": self.episode_steps}}
+        
         return obs, reward, done, info
 
     @staticmethod
