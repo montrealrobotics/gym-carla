@@ -88,7 +88,7 @@ class Args:
 
 
 def make_env(
-    env_name="carla-v0",
+    env_name="carla-bev-v0",
     number_of_vehicles=100,
     number_of_walkers=0,
     display_size=256,
@@ -100,7 +100,7 @@ def make_env(
     continuous_accel_range=[-3.0, 3.0],
     continuous_steer_range=[-0.3, 0.3],
     ego_vehicle_filter="vehicle.lincoln*",
-    port=2000,
+    port=4000,
     town="Town03",
     task_mode="random",
     max_time_episode=500,
@@ -179,7 +179,7 @@ if __name__ == "__main__":
     # device = "cpu"
 
     # TODO: eventually we want many envs!!
-    env = DummyVecEnv([lambda env_name=env_name: make_env(env_name=env_name) for env_name in ["carla-v0"]])
+    env = DummyVecEnv([lambda env_name=env_name: make_env(env_name=env_name) for env_name in ["carla-bev-v0"]])
 
     agent = PpoPolicy(env.observation_space, env.action_space).to(device)
 
@@ -291,7 +291,6 @@ if __name__ == "__main__":
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
 
-                print()
                 newvalue, newlogprob, entropy, _ = agent.evaluate_actions(
                     {k: b_obs[k][mb_inds] for k in b_obs.keys()}, b_actions[mb_inds]
                 )

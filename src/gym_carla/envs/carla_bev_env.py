@@ -30,7 +30,9 @@ class CarlaBEVEnv(gym.Env):
 
   def __init__(self, params):
     # parameters
-    self.display_size = params['display_size']  # rendering screen size tuple [width, height]
+    self.display_size = params['display_size']
+    if type(self.display_size) == int:
+      self.display_size = (self.display_size, self.display_size)
     self.max_past_step = params['max_past_step']
     self.number_of_vehicles = params['number_of_vehicles']
     self.number_of_walkers = params['number_of_walkers']
@@ -39,9 +41,8 @@ class CarlaBEVEnv(gym.Env):
     self.max_time_episode = params['max_time_episode']
     self.max_waypt = params['max_waypt']
     self.obs_range = params['obs_range']
-    self.lidar_bin = params['lidar_bin']
     self.d_behind = params['d_behind']
-    self.obs_size = int(self.obs_range/self.lidar_bin)
+    self.port = params['port']
     self.out_lane_thres = params['out_lane_thres']
     self.desired_speed = params['desired_speed']
     self.max_ego_spawn_times = params['max_ego_spawn_times']
@@ -70,13 +71,13 @@ class CarlaBEVEnv(gym.Env):
       params['continuous_steer_range'][0]]), np.array([params['continuous_accel_range'][1],
       params['continuous_steer_range'][1]]), dtype=np.float32)  # acc, steer
     observation_space_dict = {
-      'camera': spaces.Box(low=0, high=255, shape=(self.obs_size, self.obs_size, 3), dtype=np.uint8),
-      'birdeye': spaces.Box(low=0, high=255, shape=(self.obs_size, self.obs_size, 3), dtype=np.uint8),
+      # 'camera': spaces.Box(low=0, high=255, shape=(self.display_size[0], self.display_size[1], 3), dtype=np.uint8),
+      'birdeye': spaces.Box(low=0, high=1, shape=(self.display_size[0], self.display_size[1], 10), dtype=np.uint8),
       'state': spaces.Box(np.array([-2, -1, -5, 0]), np.array([2, 1, 30, 1]), dtype=np.float32)
       }
     if self.pixor:
       observation_space_dict.update({
-        'roadmap': spaces.Box(low=0, high=255, shape=(self.obs_size, self.obs_size, 3), dtype=np.uint8),
+        'roadmap': spaces.Box(low=0, high=255, shape=(self.display_size[0], self.display_size[1], 3), dtype=np.uint8),
         'vh_clas': spaces.Box(low=0, high=1, shape=(self.pixor_size, self.pixor_size, 1), dtype=np.float32),
         'vh_regr': spaces.Box(low=-5, high=5, shape=(self.pixor_size, self.pixor_size, 6), dtype=np.float32),
         'pixor_state': spaces.Box(np.array([-1000, -1000, -1, -1, -5]), np.array([1000, 1000, 1, 1, 20]), dtype=np.float32)
@@ -85,7 +86,7 @@ class CarlaBEVEnv(gym.Env):
 
     # Connect to carla server and get world object
     print('connecting to Carla server...')
-    self.client = carla.Client('localhost', params['port'])
+    self.client = carla.Client('localhost', self.port)
     self.client.set_timeout(10.0)
     self.world = self.client.load_world(params['town'])
     print('Carla server connected!')
@@ -112,19 +113,22 @@ class CarlaBEVEnv(gym.Env):
     self.collision_bp = self.world.get_blueprint_library().find('sensor.other.collision')
 
     # Camera sensor
-    self.camera_img = np.zeros((self.display_size[0], self.display_size[1], 3), dtype=np.uint8)
-    self.camera_trans = carla.Transform(carla.Location(x=0.8, z=1.7))
-    self.camera_bp = self.world.get_blueprint_library().find('sensor.camera.rgb')
-    # Modify the attributes of the blueprint to set image resolution and field of view.
-    self.camera_bp.set_attribute('image_size_x', str(self.display_size[0]))
-    self.camera_bp.set_attribute('image_size_y', str(self.display_size[1]))
-    self.camera_bp.set_attribute('fov', '110')
-    # Set the time in seconds between sensor captures
-    self.camera_bp.set_attribute('sensor_tick', '0.02')
+    # self.camera_img = np.zeros((self.display_size[0], self.display_size[1], 3), dtype=np.uint8)
+    # self.camera_trans = carla.Transform(carla.Location(x=0.8, z=1.7))
+    # self.camera_bp = self.world.get_blueprint_library().find('sensor.camera.rgb')
+    # # Modify the attributes of the blueprint to set image resolution and field of view.
+    # self.camera_bp.set_attribute('image_size_x', str(self.display_size[0]))
+    # self.camera_bp.set_attribute('image_size_y', str(self.display_size[1]))
+    # self.camera_bp.set_attribute('fov', '110')
+    # # Set the time in seconds between sensor captures
+    # self.camera_bp.set_attribute('sensor_tick', '0.02')
 
     # Set fixed simulation step for synchronous mode
     self.settings = self.world.get_settings()
     self.settings.fixed_delta_seconds = self.dt
+
+    # Disable rendering if not using camera
+    self.settings.no_rendering_mode = True
 
     # Record the time of total steps and resetting steps
     self.reset_step = 0
@@ -145,7 +149,7 @@ class CarlaBEVEnv(gym.Env):
     self.camera_sensor = None
 
     # Delete sensors, vehicles and walkers
-    self._clear_all_actors(['sensor.other.collision','sensor.camera.rgb', 'vehicle.*', 'controller.ai.walker', 'walker.*'])
+    self._clear_all_actors(['sensor.other.collision', 'vehicle.*', 'controller.ai.walker', 'walker.*']) # 'sensor.camera.rgb'
 
     # Disable sync mode
     self._set_synchronous_mode(False)
@@ -214,14 +218,14 @@ class CarlaBEVEnv(gym.Env):
     self.collision_hist = []
 
     # Add camera sensor
-    self.camera_sensor = self.world.spawn_actor(self.camera_bp, self.camera_trans, attach_to=self.ego)
-    self.camera_sensor.listen(lambda data: get_camera_img(data))
-    def get_camera_img(data):
-      array = np.frombuffer(data.raw_data, dtype = np.dtype("uint8"))
-      array = np.reshape(array, (data.height, data.width, 4))
-      array = array[:, :, :3]
-      array = array[:, :, ::-1]
-      self.camera_img = array
+    # self.camera_sensor = self.world.spawn_actor(self.camera_bp, self.camera_trans, attach_to=self.ego)
+    # self.camera_sensor.listen(lambda data: get_camera_img(data))
+    # def get_camera_img(data):
+    #   array = np.frombuffer(data.raw_data, dtype = np.dtype("uint8"))
+    #   array = np.reshape(array, (data.height, data.width, 4))
+    #   array = array[:, :, :3]
+    #   array = array[:, :, ::-1]
+    #   self.camera_img = array
 
     # Update timesteps
     self.time_step=0
@@ -322,9 +326,10 @@ class CarlaBEVEnv(gym.Env):
     (self.display_size[0] * 2, self.display_size[1]),
     pygame.HWSURFACE | pygame.DOUBLEBUF)
 
+    pixels_per_meter = self.display_size[0] / self.obs_range
     birdeye_params = {
       'target_size': PixelDimensions(*self.display_size),  
-      'pixels_per_meter': 4,
+      'pixels_per_meter': pixels_per_meter,
       'crop_type': BirdViewCropType.FRONT_AND_REAR_AREA,
       'render_lanes_on_junctions': True,
     }
@@ -349,7 +354,7 @@ class CarlaBEVEnv(gym.Env):
     blueprint.set_attribute('role_name', 'autopilot')
     vehicle = self.world.try_spawn_actor(blueprint, transform)
     if vehicle is not None:
-      vehicle.set_autopilot(tm_port=8001)
+      vehicle.set_autopilot(tm_port=self.port+6000)
       return True
     return False
 
@@ -452,9 +457,9 @@ class CarlaBEVEnv(gym.Env):
     self.display.blit(birdeye_surface, (0, 0))
 
     ## Display camera image
-    camera = resize(self.camera_img, self.display_size) * 255
-    camera_surface = rgb_to_display_surface(camera, self.display_size)
-    self.display.blit(camera_surface, (self.display_size[0], 0))
+    # camera = resize(self.camera_img, self.display_size) * 255
+    # camera_surface = rgb_to_display_surface(camera, self.display_size)
+    # self.display.blit(camera_surface, (self.display_size[0], 0))
 
     # Display on pygame
     pygame.display.flip()
@@ -508,7 +513,7 @@ class CarlaBEVEnv(gym.Env):
       pixor_state = [ego_x, ego_y, np.cos(ego_yaw), np.sin(ego_yaw), speed]
 
     obs = {
-      'camera':camera.astype(np.uint8),
+      # 'camera':camera.astype(np.uint8),
       'birdeye':birdeye.astype(np.uint8),
       'state': state,
     }
