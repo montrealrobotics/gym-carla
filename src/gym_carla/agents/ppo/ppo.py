@@ -175,8 +175,8 @@ if __name__ == "__main__":
         % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
 
-    # device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
-    device = "cpu"
+    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+    # device = "cpu"
 
     # TODO: eventually we want many envs!!
     env = DummyVecEnv([lambda env_name=env_name: make_env(env_name=env_name) for env_name in ["carla-bev-v0"]])
