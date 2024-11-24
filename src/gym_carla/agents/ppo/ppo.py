@@ -175,8 +175,8 @@ if __name__ == "__main__":
         % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
 
-    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
-    # device = "cpu"
+    # device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+    device = "cpu"
 
     # TODO: eventually we want many envs!!
     env = DummyVecEnv([lambda env_name=env_name: make_env(env_name=env_name) for env_name in ["carla-bev-v0"]])
@@ -214,6 +214,7 @@ if __name__ == "__main__":
     next_done = torch.zeros(env.num_envs).to(device)
 
     for iteration in range(1, args.num_iterations + 1):
+        print("Iteration:", iteration)
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
             frac = 1.0 - (iteration - 1.0) / args.num_iterations
@@ -237,17 +238,24 @@ if __name__ == "__main__":
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             next_done = torch.Tensor(next_done).to(device)
 
-            if "final_info" in infos:
-                for info in infos["final_info"]:
-                    if info and "episode" in info:
+            print("Step:", step)
+            # if "final_info" in infos:
+                # print(">>> if final_info in infos")
+                # for info in infos["final_info"]:
+                #     print("for info in infos[\"final_info\"]")
+            for info in infos:
+                if(next_done or step == (args.num_steps-1)):
+                    if "episode" in info["final_info"]:
+                        ret = info["final_info"]["episode"]["r"]
+                        ep_len = info["final_info"]["episode"]["l"]
                         print(
-                            f"global_step={global_step}, episodic_return={info['episode']['r']}"
+                            f"global_step={global_step}, episodic_return={ret}"
                         )
                         writer.add_scalar(
-                            "charts/episodic_return", info["episode"]["r"], global_step
+                            "charts/episodic_return", ret, global_step
                         )
                         writer.add_scalar(
-                            "charts/episodic_length", info["episode"]["l"], global_step
+                            "charts/episodic_length", ep_len, global_step
                         )
 
         # bootstrap value if not done
@@ -286,6 +294,7 @@ if __name__ == "__main__":
         clipfracs = []
         print("Training...")
         for epoch in range(args.update_epochs):
+            print("Epoch:", epoch)
             np.random.shuffle(b_inds)
             for start in range(0, args.batch_size, args.minibatch_size):
                 end = start + args.minibatch_size
