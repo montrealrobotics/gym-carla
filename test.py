@@ -14,7 +14,7 @@ def main():
   params = {
     'number_of_vehicles': 100,
     'number_of_walkers': 0,
-    'display_size': 256,  # screen size of bird-eye render
+    'display_size': (512, 512),#256,  # screen size of bird-eye render
     'max_past_step': 1,  # the number of past steps to draw
     'dt': 0.1,  # time interval between two frames
     'discrete': False,  # whether to use discrete control space
@@ -23,7 +23,7 @@ def main():
     'continuous_accel_range': [-3.0, 3.0],  # continuous acceleration range
     'continuous_steer_range': [-0.3, 0.3],  # continuous steering angle range
     'ego_vehicle_filter': 'vehicle.lincoln*',  # filter for defining ego vehicle
-    'port': 2000,  # connection port
+    'port': 4000,  # connection port
     'town': 'Town03',  # which town to simulate
     'task_mode': 'random',  # mode of the task, [random, roundabout (only for Town03)]
     'max_time_episode': 1000,  # maximum timesteps per episode
@@ -40,7 +40,7 @@ def main():
   }
 
   # Set gym-carla environment
-  env = gym.make('carla-v0', params=params)
+  env = gym.make('carla-bev-v0', params=params)
   obs = env.reset()
 
   while True:

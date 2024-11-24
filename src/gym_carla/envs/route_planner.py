@@ -34,7 +34,7 @@ class RoutePlanner():
     self._map = self._world.get_map()
 
     self._sampling_radius = 5
-    self._min_distance = 4
+    self._min_distance = 6
 
     self._target_waypoint = None
     self._buffer_size = buffer_size
