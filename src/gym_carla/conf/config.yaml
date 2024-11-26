@@ -1,0 +1,29 @@
+defaults:
+    - agent: ppo 
+    - override hydra/launcher: joblib
+
+
+hydra:
+  launcher:
+    n_jobs: 1
+  sweep:
+    dir: results
+    subdir: ${hydra.job.override_dirname}/seed=${seed}
+  job:
+    config:
+      override_dirname:
+        kv_sep: "-"
+        item_sep: "/"
+        exclude_keys:
+          - seed
+
+seed: 1
+torch_deterministic: true
+cuda: true
+save_model: false
+town: "Town03"
+env_id: "carla-v0"
+num_envs: 1
+num_steps: 256
+total_timesteps: 40000
+num_iterations: 0

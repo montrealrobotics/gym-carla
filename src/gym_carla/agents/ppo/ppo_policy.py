@@ -25,8 +25,8 @@ class PpoPolicy(nn.Module):
         self.features_extractor_kwargs = features_extractor_kwargs
         self.distribution_kwargs = distribution_kwargs
 
-        # self.device = "cuda" if th.cuda.is_available() else "cpu"
-        self.device = "cpu"
+        self.device = "cuda" if th.cuda.is_available() else "cpu"
+        # self.device = "cpu"
 
         self.optimizer_class = th.optim.Adam
         self.optimizer_kwargs = {"eps": 1e-5}

@@ -15,76 +15,78 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 
 from gym_carla.agents.birdview.birdview_wrapper import BirdviewWrapper
 from gym_carla.agents.ppo.ppo_policy import PpoPolicy
+from hydra.core.hydra_config import HydraConfig
+from omegaconf import DictConfig, OmegaConf
+import hydra
 
+# @dataclass
+# class Args:
+#     exp_name: str = os.path.basename(__file__)[: -len(".py")]
+#     """the name of this experiment"""
+#     seed: int = 1
+#     """seed of the experiment"""
+#     torch_deterministic: bool = True
+#     """if toggled, `torch.backends.cudnn.deterministic=False`"""
+#     cuda: bool = True
+#     """if toggled, cuda will be enabled by default"""
+#     # track: bool = False
+#     # """if toggled, this experiment will be tracked with Weights and Biases"""
+#     # wandb_project_name: str = "cleanRL"
+#     # """the wandb's project name"""
+#     # wandb_entity: str = None
+#     # """the entity (team) of wandb's project"""
+#     # capture_video: bool = False
+#     # """whether to capture videos of the agent performances (check out `videos` folder)"""
+#     save_model: bool = False
+#     """whether to save model into the `runs/{run_name}` folder"""
+#     # upload_model: bool = False
+#     # """whether to upload the saved model to huggingface"""
+#     # hf_entity: str = ""
+#     # """the user or org name of the model repository from the Hugging Face Hub"""
 
-@dataclass
-class Args:
-    exp_name: str = os.path.basename(__file__)[: -len(".py")]
-    """the name of this experiment"""
-    seed: int = 1
-    """seed of the experiment"""
-    torch_deterministic: bool = True
-    """if toggled, `torch.backends.cudnn.deterministic=False`"""
-    cuda: bool = True
-    """if toggled, cuda will be enabled by default"""
-    track: bool = False
-    """if toggled, this experiment will be tracked with Weights and Biases"""
-    wandb_project_name: str = "cleanRL"
-    """the wandb's project name"""
-    wandb_entity: str = None
-    """the entity (team) of wandb's project"""
-    capture_video: bool = False
-    """whether to capture videos of the agent performances (check out `videos` folder)"""
-    save_model: bool = False
-    """whether to save model into the `runs/{run_name}` folder"""
-    upload_model: bool = False
-    """whether to upload the saved model to huggingface"""
-    hf_entity: str = ""
-    """the user or org name of the model repository from the Hugging Face Hub"""
+#     # Algorithm specific arguments
+#     env_id: str = "HalfCheetah-v4"
+#     """the id of the environment"""
+#     total_timesteps: int = 5000 #512 #1000000
+#     """total timesteps of the experiments"""
+#     learning_rate: float = 3e-5#3e-4
+#     """the learning rate of the optimizer"""
+#     num_envs: int = 1
+#     """the number of parallel game environments"""
+#     num_steps: int = 256 # 2048
+#     """the number of steps to run in each environment per policy rollout"""
+#     anneal_lr: bool = True
+#     """Toggle learning rate annealing for policy and value networks"""
+#     gamma: float = 0.99
+#     """the discount factor gamma"""
+#     gae_lambda: float = 0.95
+#     """the lambda for the general advantage estimation"""
+#     num_minibatches: int = 32
+#     """the number of mini-batches"""
+#     update_epochs: int = 10
+#     """the K epochs to update the policy"""
+#     norm_adv: bool = True
+#     """Toggles advantages normalization"""
+#     clip_coef: float = 0.2
+#     """the surrogate clipping coefficient"""
+#     clip_vloss: bool = True
+#     """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
+#     ent_coef: float = 0.0
+#     """coefficient of the entropy"""
+#     vf_coef: float = 0.5
+#     """coefficient of the value function"""
+#     max_grad_norm: float = 0.5
+#     """the maximum norm for the gradient clipping"""
+#     target_kl: float = None
+#     """the target KL divergence threshold"""
 
-    # Algorithm specific arguments
-    env_id: str = "HalfCheetah-v4"
-    """the id of the environment"""
-    total_timesteps: int = 512 #1000000
-    """total timesteps of the experiments"""
-    learning_rate: float = 3e-4
-    """the learning rate of the optimizer"""
-    num_envs: int = 1
-    """the number of parallel game environments"""
-    num_steps: int = 256 # 2048
-    """the number of steps to run in each environment per policy rollout"""
-    anneal_lr: bool = True
-    """Toggle learning rate annealing for policy and value networks"""
-    gamma: float = 0.99
-    """the discount factor gamma"""
-    gae_lambda: float = 0.95
-    """the lambda for the general advantage estimation"""
-    num_minibatches: int = 32
-    """the number of mini-batches"""
-    update_epochs: int = 10
-    """the K epochs to update the policy"""
-    norm_adv: bool = True
-    """Toggles advantages normalization"""
-    clip_coef: float = 0.2
-    """the surrogate clipping coefficient"""
-    clip_vloss: bool = True
-    """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
-    ent_coef: float = 0.0
-    """coefficient of the entropy"""
-    vf_coef: float = 0.5
-    """coefficient of the value function"""
-    max_grad_norm: float = 0.5
-    """the maximum norm for the gradient clipping"""
-    target_kl: float = None
-    """the target KL divergence threshold"""
-
-    # to be filled in runtime
-    batch_size: int = 0
-    """the batch size (computed in runtime)"""
-    minibatch_size: int = 0
-    """the mini-batch size (computed in runtime)"""
-    num_iterations: int = 0
-    """the number of iterations (computed in runtime)"""
+#     # to be filled in runtime
+#     batch_size: int = 0
+#     """the batch size (computed in runtime)"""
+#     minibatch_size: int = 0
+#     """the mini-batch size (computed in runtime)"""
+#     num_iterations: int = 0
+#     """the number of iterations (computed in runtime)"""
 
 
 def make_env(
@@ -150,59 +152,61 @@ def make_env(
     return env
 
 
-if __name__ == "__main__":
-    args = tyro.cli(Args)
-    args.batch_size = int(args.num_envs * args.num_steps)
-    args.minibatch_size = int(args.batch_size // args.num_minibatches)
-    args.num_iterations = args.total_timesteps // args.batch_size
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
-    if args.track:
-        import wandb
+def run_single_experiment(cfg, seed, save_path):
+    exp_name = os.path.basename(__file__)[: -len(".py")]
+    # args = tyro.cli(Args)
+    cfg.agent.batch_size = int(cfg.num_envs * cfg.num_steps)
+    cfg.agent.minibatch_size = int(cfg.agent.batch_size // cfg.agent.num_minibatches)
+    cfg.num_iterations = cfg.total_timesteps // cfg.agent.batch_size
+    run_name = f"{cfg.env_id}__{exp_name}__{cfg.seed}__{int(time.time())}"
+    # if args.track:
+    #     import wandb
 
-        wandb.init(
-            project=args.wandb_project_name,
-            entity=args.wandb_entity,
-            sync_tensorboard=True,
-            config=vars(args),
-            name=run_name,
-            monitor_gym=True,
-            save_code=True,
-        )
+    #     wandb.init(
+    #         project=args.wandb_project_name,
+    #         entity=args.wandb_entity,
+    #         sync_tensorboard=True,
+    #         config=vars(args),
+    #         name=run_name,
+    #         monitor_gym=True,
+    #         save_code=True,
+    #     )
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n%s"
-        % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
+        % ("\n".join([f"|{key}|{value}|" for key, value in vars(cfg).items()])), #TODO: vars cfg prolly needs adjustment
     )
 
-    # device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
-    device = "cpu"
+    device = torch.device("cuda" if torch.cuda.is_available() and cfg.cuda else "cpu")
+    # device = "cpu"
 
     # TODO: eventually we want many envs!!
-    env = DummyVecEnv([lambda env_name=env_name: make_env(env_name=env_name) for env_name in ["carla-v0"]])
-
+    env = DummyVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town) for env_name, env_town in [(cfg.env_id, cfg.town)]])
+    # env = DummyVecEnv([make_env(env_name=cfg.env_id, town=cfg.town)])
+    
     agent = PpoPolicy(env.observation_space, env.action_space).to(device)
 
-    optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    optimizer = optim.Adam(agent.parameters(), lr=cfg.agent.learning_rate, eps=1e-5)
 
     obs = {}
     for k, s in env.observation_space.spaces.items():
-        obs[k] = torch.zeros((args.num_steps, env.num_envs,) + s.shape).to(device)
-    actions = torch.zeros((args.num_steps, args.num_envs) + env.action_space.shape).to(
+        obs[k] = torch.zeros((cfg.num_steps, env.num_envs,) + s.shape).to(device)
+    actions = torch.zeros((cfg.num_steps, cfg.num_envs) + env.action_space.shape).to(
         device
     )
-    logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    values = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    logprobs = torch.zeros((cfg.num_steps, cfg.num_envs)).to(device)
+    rewards = torch.zeros((cfg.num_steps, cfg.num_envs)).to(device)
+    dones = torch.zeros((cfg.num_steps, cfg.num_envs)).to(device)
+    values = torch.zeros((cfg.num_steps, cfg.num_envs)).to(device)
 
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.backends.cudnn.deterministic = args.torch_deterministic
-    env.action_space.seed(args.seed)
-    env.observation_space.seed(args.seed)
-    env.seed(args.seed)
+    random.seed(cfg.seed)
+    np.random.seed(cfg.seed)
+    torch.manual_seed(cfg.seed)
+    torch.backends.cudnn.deterministic = cfg.torch_deterministic
+    env.action_space.seed(cfg.seed)
+    env.observation_space.seed(cfg.seed)
+    env.seed(cfg.seed)
 
     global_step = 0
     start_time = time.time()
@@ -213,17 +217,17 @@ if __name__ == "__main__":
     next_obs = env.reset()
     next_done = torch.zeros(env.num_envs).to(device)
 
-    for iteration in range(1, args.num_iterations + 1):
+    for iteration in range(1, cfg.num_iterations + 1):
         print("Iteration:", iteration)
         # Annealing the rate if instructed to do so.
-        if args.anneal_lr:
-            frac = 1.0 - (iteration - 1.0) / args.num_iterations
-            lrnow = frac * args.learning_rate
+        if cfg.agent.anneal_lr:
+            frac = 1.0 - (iteration - 1.0) / cfg.num_iterations
+            lrnow = frac * cfg.agent.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
 
         print("Collecting experience...")
-        for step in range(0, args.num_steps):
-            global_step += args.num_envs
+        for step in range(0, cfg.num_steps):
+            global_step += cfg.num_envs
             for k, v in next_obs.items():
                 obs[k][step] = torch.Tensor(v).to(device)
             dones[step] = next_done
@@ -244,7 +248,7 @@ if __name__ == "__main__":
                 # for info in infos["final_info"]:
                 #     print("for info in infos[\"final_info\"]")
             for info in infos:
-                if(next_done or step == (args.num_steps-1)):
+                if(next_done or step == (cfg.num_steps-1)):
                     if "episode" in info["final_info"]:
                         ret = info["final_info"]["episode"]["r"]
                         ep_len = info["final_info"]["episode"]["l"]
@@ -263,18 +267,18 @@ if __name__ == "__main__":
             next_value = agent.forward_value(next_obs).reshape(1, -1)
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
-            for t in reversed(range(args.num_steps)):
-                if t == args.num_steps - 1:
+            for t in reversed(range(cfg.num_steps)):
+                if t == cfg.num_steps - 1:
                     nextnonterminal = 1.0 - next_done
                     nextvalues = next_value
                 else:
                     nextnonterminal = 1.0 - dones[t + 1]
                     nextvalues = values[t + 1]
                 delta = (
-                    rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
+                    rewards[t] + cfg.agent.gamma * nextvalues * nextnonterminal - values[t]
                 )
                 advantages[t] = lastgaelam = (
-                    delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+                    delta + cfg.agent.gamma * cfg.agent.gae_lambda * nextnonterminal * lastgaelam
                 )
             returns = advantages + values
 
@@ -290,14 +294,14 @@ if __name__ == "__main__":
         b_values = values.reshape(-1)
 
         # Optimizing the policy and value network
-        b_inds = np.arange(args.batch_size)
+        b_inds = np.arange(cfg.agent.batch_size)
         clipfracs = []
         print("Training...")
-        for epoch in range(args.update_epochs):
+        for epoch in range(cfg.agent.update_epochs):
             print("Epoch:", epoch)
             np.random.shuffle(b_inds)
-            for start in range(0, args.batch_size, args.minibatch_size):
-                end = start + args.minibatch_size
+            for start in range(0, cfg.agent.batch_size, cfg.agent.minibatch_size):
+                end = start + cfg.agent.minibatch_size
                 mb_inds = b_inds[start:end]
 
                 # print()
@@ -311,25 +315,25 @@ if __name__ == "__main__":
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
                     old_approx_kl = (-logratio).mean()
                     approx_kl = ((ratio - 1) - logratio).mean()
-                    clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+                    clipfracs += [((ratio - 1.0).abs() > cfg.agent.clip_coef).float().mean().item()]
                 
                 mb_advantages = b_advantages[mb_inds]
-                if args.norm_adv:
+                if cfg.agent.norm_adv:
                     mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
                 # Policy loss
                 pg_loss1 = -mb_advantages * ratio
-                pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+                pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - cfg.agent.clip_coef, 1 + cfg.agent.clip_coef)
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
                 # Value loss
                 newvalue = newvalue.view(-1)
-                if args.clip_vloss:
+                if cfg.agent.clip_vloss:
                     v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
                     v_clipped = b_values[mb_inds] + torch.clamp(
                         newvalue - b_values[mb_inds],
-                        -args.clip_coef,
-                        args.clip_coef,
+                        -cfg.agent.clip_coef,
+                        cfg.agent.clip_coef,
                     )
                     v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
                     v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
@@ -338,14 +342,14 @@ if __name__ == "__main__":
                     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
                 entropy_loss = entropy.mean()
-                loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+                loss = pg_loss - cfg.agent.ent_coef * entropy_loss + v_loss * cfg.agent.vf_coef
 
                 optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
+                nn.utils.clip_grad_norm_(agent.parameters(), cfg.agent.max_grad_norm)
                 optimizer.step()
 
-            if args.target_kl is not None and approx_kl > args.target_kl:
+            if cfg.agent.target_kl is not None and approx_kl > cfg.agent.target_kl:
                 break
 
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
@@ -364,8 +368,8 @@ if __name__ == "__main__":
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-    if args.save_model:
-        model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
+    if cfg.save_model:
+        model_path = f"runs/{run_name}/{exp_name}.cleanrl_model"
         torch.save(agent.state_dict(), model_path)
         print(f"model saved to {model_path}")
         # from cleanrl_utils.evals.ppo_eval import evaluate
@@ -385,3 +389,14 @@ if __name__ == "__main__":
 
     env.close()
     writer.close()
+    
+@hydra.main(version_base=None, config_path="../../conf", config_name="config")
+def run_experiment(cfg: DictConfig) -> None:
+    print(OmegaConf.to_yaml(cfg))
+    save_path = HydraConfig.get().runtime.output_dir
+    print(">>> Storing outputs in: ", save_path)
+    os.makedirs("./results", exist_ok=True) # TODO: where we'll store results. we need to decide on which stats.
+    run_single_experiment(cfg, cfg.seed, save_path)
+
+if __name__ == "__main__":
+    run_experiment()

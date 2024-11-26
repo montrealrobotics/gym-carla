@@ -1,0 +1,16 @@
+id: ppo
+batch_size: 0
+minibatch_size: 0
+target_kl: null
+max_grad_norm: 0.5
+vf_coef: 0.5
+ent_coef: 0.0
+clip_vloss: true
+clip_coef: 0.2
+norm_adv: true
+update_epochs: 10
+num_minibatches: 32
+gae_lambda: 0.95
+gamma: 0.99
+anneal_lr: true
+learning_rate: 3e-5
