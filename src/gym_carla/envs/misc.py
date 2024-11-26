@@ -15,6 +15,7 @@ import carla
 import pygame
 from matplotlib.path import Path
 import skimage
+from cv2 import cv2
 
 
 def get_speed(vehicle):
@@ -242,10 +243,11 @@ def rgb_to_display_surface(rgb, display_size):
   :param display_size: display size
   :return: pygame surface
   """
-  surface = pygame.Surface((display_size, display_size)).convert()
-  display = skimage.transform.resize(rgb, (display_size, display_size))
+  if type(display_size) == int:
+    display_size = (display_size, display_size)
+  display = cv2.resize(rgb, display_size)
   display = np.flip(display, axis=1)
   display = np.rot90(display, 1)
-  pygame.surfarray.blit_array(surface, display)
+  surface = pygame.surfarray.make_surface(display)
   return surface
 

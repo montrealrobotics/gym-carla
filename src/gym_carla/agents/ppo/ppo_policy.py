@@ -230,8 +230,8 @@ class PpoPolicy(nn.Module):
 
     @classmethod
     def load(cls, path):
-        # device = "cuda" if th.cuda.is_available() else "cpu"
-        device = "cpu"
+        device = "cuda" if th.cuda.is_available() else "cpu"
+        # device = "cpu"
 
         saved_variables = th.load(path, map_location=device)
         # Create policy object
