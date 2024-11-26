@@ -182,8 +182,8 @@ def run_single_experiment(cfg, seed, save_path):
     # device = "cpu"
 
     # TODO: eventually we want many envs!!
-    # env = DummyVecEnv([lambda env_name=env_name: make_env(env_name=env_name) for env_name in [cfg.env_id]])
-    env = DummyVecEnv([make_env(env_name=cfg.env_id, town=cfg.town)])
+    env = DummyVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town) for env_name, env_town in [(cfg.env_id, cfg.town)]])
+    # env = DummyVecEnv([make_env(env_name=cfg.env_id, town=cfg.town)])
     
     agent = PpoPolicy(env.observation_space, env.action_space).to(device)
 
