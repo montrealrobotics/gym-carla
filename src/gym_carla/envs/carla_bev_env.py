@@ -42,11 +42,11 @@ class CarlaBEVEnv(gym.Env):
     self.max_waypt = params['max_waypt']
     self.obs_range = params['obs_range']
     self.d_behind = params['d_behind']
-    self.port = params['port']
+    self._port = params['port']
     self.out_lane_thres = params['out_lane_thres']
     self.desired_speed = params['desired_speed']
     self.max_ego_spawn_times = params['max_ego_spawn_times']
-    self.display_route = params['display_route']
+    self._headless = params['headless'] if 'headless' in params else False
     if 'pixor' in params.keys():
       self.pixor = params['pixor']
       self.pixor_size = params['pixor_size']
@@ -86,7 +86,7 @@ class CarlaBEVEnv(gym.Env):
 
     # Connect to carla server and get world object
     print('connecting to Carla server...')
-    self.client = carla.Client('localhost', self.port)
+    self.client = carla.Client('localhost', self._port)
     self.client.set_timeout(10.0)
     self.world = self.client.load_world(params['town'])
     print('Carla server connected!')
@@ -321,10 +321,11 @@ class CarlaBEVEnv(gym.Env):
   def _init_renderer(self):
     """Initialize the birdeye view renderer.
     """
-    pygame.init()
-    self.display = pygame.display.set_mode(
-    (self.display_size[0] * 2, self.display_size[1]),
-    pygame.HWSURFACE | pygame.DOUBLEBUF)
+    if not self._headless:
+      pygame.init()
+      self.display = pygame.display.set_mode(
+      (self.display_size[0] * 2, self.display_size[1]),
+      pygame.HWSURFACE | pygame.DOUBLEBUF)
 
     pixels_per_meter = self.display_size[0] / self.obs_range
     birdeye_params = {
@@ -354,7 +355,7 @@ class CarlaBEVEnv(gym.Env):
     blueprint.set_attribute('role_name', 'autopilot')
     vehicle = self.world.try_spawn_actor(blueprint, transform)
     if vehicle is not None:
-      vehicle.set_autopilot(tm_port=self.port+6000)
+      vehicle.set_autopilot(tm_port=self._port+6000)
       return True
     return False
 
@@ -450,11 +451,12 @@ class CarlaBEVEnv(gym.Env):
     birdeye = self.birdeye_render.produce(
         agent_vehicle=self.ego  # carla.Actor (spawned vehicle)
     )
-    birdeye_rgb = BirdViewProducer.as_rgb(birdeye).astype("uint8")
 
     # Display birdeye image
-    birdeye_surface = rgb_to_display_surface(birdeye_rgb, self.display_size)
-    self.display.blit(birdeye_surface, (0, 0))
+    if not self._headless:
+      birdeye_rgb = BirdViewProducer.as_rgb(birdeye).astype("uint8")
+      birdeye_surface = rgb_to_display_surface(birdeye_rgb, self.display_size)
+      self.display.blit(birdeye_surface, (0, 0))
 
     ## Display camera image
     # camera = resize(self.camera_img, self.display_size) * 255
@@ -462,7 +464,8 @@ class CarlaBEVEnv(gym.Env):
     # self.display.blit(camera_surface, (self.display_size[0], 0))
 
     # Display on pygame
-    pygame.display.flip()
+    if not self._headless:
+      pygame.display.flip() 
 
     # State observation
     ego_trans = self.ego.get_transform()
