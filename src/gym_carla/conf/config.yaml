@@ -27,3 +27,5 @@ num_envs: 1
 num_steps: 256
 total_timesteps: 40000
 num_iterations: 0
+save_last_n: 2
+save_video: true

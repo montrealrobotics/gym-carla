@@ -12,14 +12,12 @@ import numpy as np
 import pygame
 import random
 import time
-from skimage.transform import resize
 
 import gym
 from gym import spaces
 from gym.utils import seeding
 import carla
 
-from cv2 import cv2
 from carla_birdeye_view import BirdViewProducer, BirdViewCropType, PixelDimensions
 from gym_carla.envs.route_planner import RoutePlanner
 from gym_carla.envs.misc import *
@@ -72,7 +70,7 @@ class CarlaBEVEnv(gym.Env):
       params['continuous_steer_range'][1]]), dtype=np.float32)  # acc, steer
     observation_space_dict = {
       # 'camera': spaces.Box(low=0, high=255, shape=(self.display_size[0], self.display_size[1], 3), dtype=np.uint8),
-      'birdeye': spaces.Box(low=0, high=1, shape=(self.display_size[0], self.display_size[1], 10), dtype=np.uint8),
+      'birdeye': spaces.Box(low=0, high=255, shape=(self.display_size[0], self.display_size[1], 3), dtype=np.uint8),
       'state': spaces.Box(np.array([-2, -1, -5, 0]), np.array([2, 1, 30, 1]), dtype=np.float32)
       }
     if self.pixor:
@@ -451,10 +449,10 @@ class CarlaBEVEnv(gym.Env):
     birdeye = self.birdeye_render.produce(
         agent_vehicle=self.ego  # carla.Actor (spawned vehicle)
     )
+    birdeye_rgb = BirdViewProducer.as_rgb(birdeye).astype(np.uint8)
 
     # Display birdeye image
     if not self._headless:
-      birdeye_rgb = BirdViewProducer.as_rgb(birdeye).astype("uint8")
       birdeye_surface = rgb_to_display_surface(birdeye_rgb, self.display_size)
       self.display.blit(birdeye_surface, (0, 0))
 
@@ -517,7 +515,7 @@ class CarlaBEVEnv(gym.Env):
 
     obs = {
       # 'camera':camera.astype(np.uint8),
-      'birdeye':birdeye.astype(np.uint8),
+      'birdeye': birdeye_rgb,
       'state': state,
     }
 
