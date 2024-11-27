@@ -91,7 +91,7 @@ import hydra
 
 def make_env(
     env_name="carla-bev-v0",
-    number_of_vehicles=100,
+    number_of_vehicles=25,
     number_of_walkers=0,
     display_size=256,
     max_past_step=1,
@@ -101,7 +101,7 @@ def make_env(
     discrete_steer=[-0.2, 0.0, 0.2],
     continuous_accel_range=[-3.0, 3.0],
     continuous_steer_range=[-0.3, 0.3],
-    ego_vehicle_filter="vehicle.lincoln*",
+    ego_vehicle_filter="vehicle.audi.a2",
     port=4000,
     town="Town03",
     task_mode="random",
@@ -116,6 +116,7 @@ def make_env(
     display_route=True,
     pixor_size=64,
     pixor=False,
+    seed=None,
 ):
     """Loads train and eval environments."""
     env_params = {
@@ -144,6 +145,7 @@ def make_env(
         "display_route": display_route,  # whether to render the desired route
         "pixor_size": pixor_size,  # size of the pixor labels
         "pixor": pixor,  # whether to output PIXOR observation
+        "seed": seed,
     }
 
     gym_spec = gym.spec(env_name)
