@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 import gym
 import numpy as np
+import cv2
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -191,8 +192,8 @@ def run_single_experiment(cfg, seed, save_path):
 
     obs = {}
     for k, s in env.observation_space.spaces.items():
-        obs[k] = torch.zeros((cfg.num_steps, env.num_envs,) + s.shape).to(device)
-    actions = torch.zeros((cfg.num_steps, cfg.num_envs) + env.action_space.shape).to(
+        obs[k] = torch.zeros((cfg.num_steps, env.num_envs,) + s.shape, dtype=torch.uint8).to(device)
+    actions = torch.zeros((cfg.num_steps, cfg.num_envs) + env.action_space.shape, dtype=torch.float32).to(
         device
     )
     logprobs = torch.zeros((cfg.num_steps, cfg.num_envs)).to(device)
@@ -226,6 +227,8 @@ def run_single_experiment(cfg, seed, save_path):
             optimizer.param_groups[0]["lr"] = lrnow
 
         print("Collecting experience...")
+        ep_start_idx = [0]
+        ep_lens = []
         for step in range(0, cfg.num_steps):
             global_step += cfg.num_envs
             for k, v in next_obs.items():
@@ -252,6 +255,9 @@ def run_single_experiment(cfg, seed, save_path):
                     if "episode" in info["final_info"]:
                         ret = info["final_info"]["episode"]["r"]
                         ep_len = info["final_info"]["episode"]["l"]
+                        ep_lens.append(int(ep_len))
+                        if step < cfg.num_steps-1:
+                            ep_start_idx.append(step)
                         print(
                             f"global_step={global_step}, episodic_return={ret}"
                         )
@@ -281,6 +287,19 @@ def run_single_experiment(cfg, seed, save_path):
                     delta + cfg.agent.gamma * cfg.agent.gae_lambda * nextnonterminal * lastgaelam
                 )
             returns = advantages + values
+        
+        if cfg.save_video:
+            start_ep = max(len(ep_start_idx)-cfg.save_last_n, 0)
+            for i, start_step in enumerate(ep_start_idx[start_ep:]):
+                ep = i+start_ep
+                images = [obs['birdeye'][start_step+j, 0].cpu().numpy() for j in range(ep_lens[ep])]
+                width, height = images[0].shape[:2]
+                out = cv2.VideoWriter(f"{save_path}/ep_{ep}.mp4", cv2.VideoWriter_fourcc(*'mp4v'), 10, (width, height))
+                for img in images:
+                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    out.write(img)
+                print(f"Saving video to {save_path}/ep_{ep}.mp4")
+                out.release()
 
         # flatten the batch
         b_obs = {}
