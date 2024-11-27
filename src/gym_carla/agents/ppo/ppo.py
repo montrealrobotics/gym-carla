@@ -382,6 +382,7 @@ def run_single_experiment(cfg, seed, save_path, port):
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def run_experiment(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
+    os.environ["SDL_VIDEODRIVER"] = "dummy"
     save_path = HydraConfig.get().runtime.output_dir
     print(">>> Storing outputs in: ", save_path)
     os.makedirs("./results", exist_ok=True) # TODO: where we'll store results. we need to decide on which stats.

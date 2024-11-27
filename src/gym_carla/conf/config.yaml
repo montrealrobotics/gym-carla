@@ -22,7 +22,7 @@ torch_deterministic: true
 cuda: true
 save_model: false
 town: "Town03"
-env_id: "carla-v0"
+env_id: "carla-bev-v0"
 num_envs: 1
 num_steps: 256
 total_timesteps: 1024
