@@ -47,6 +47,7 @@ class CarlaBEVEnv(gym.Env):
     self.desired_speed = params['desired_speed']
     self.max_ego_spawn_times = params['max_ego_spawn_times']
     self._headless = params['headless'] if 'headless' in params else False
+    self._seed = params['seed']
     if 'pixor' in params.keys():
       self.pixor = params['pixor']
       self.pixor_size = params['pixor_size']
@@ -88,6 +89,12 @@ class CarlaBEVEnv(gym.Env):
     print('connecting to Carla server...')
     self.client = carla.Client('localhost', self._port)
     self.client.set_timeout(10.0)
+    self._tm = self.client.get_trafficmanager(self._port+1500)
+    self._tm_port = self._port+1500
+    if self._seed:
+      self._tm.set_random_device_seed(self._seed)
+      random.seed(self._seed)
+      np.random.seed(self._seed)
     self.world = self.client.load_world(params['town'])
     print('Carla server connected!')
 
@@ -351,11 +358,11 @@ class CarlaBEVEnv(gym.Env):
     Returns:
       Bool indicating whether the spawn is successful.
     """
-    blueprint = self._create_vehicle_bluepprint('vehicle.*', number_of_wheels=number_of_wheels)
+    blueprint = self._create_vehicle_bluepprint('vehicle.audi.a2', number_of_wheels=number_of_wheels) #vehicle.*
     blueprint.set_attribute('role_name', 'autopilot')
     vehicle = self.world.try_spawn_actor(blueprint, transform)
     if vehicle is not None:
-      vehicle.set_autopilot(tm_port=self._port+6000)
+      vehicle.set_autopilot(True, tm_port=self._tm_port)
       return True
     return False
 
