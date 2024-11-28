@@ -100,7 +100,7 @@ def make_env(
     discrete=False,
     discrete_acc=[-3.0, 0.0, 3.0],
     discrete_steer=[-0.2, 0.0, 0.2],
-    continuous_accel_range=[-3.0, 3.0],
+    continuous_accel_range=[-1.0, 1.0],
     continuous_steer_range=[-0.3, 0.3],
     ego_vehicle_filter="vehicle.audi.a2",
     port=4000,
@@ -177,10 +177,10 @@ def run_single_experiment(cfg, seed, save_path, port):
     # device = "cpu"
 
     # TODO: eventually we want many envs!!
-    env = DummyVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town, port=port) for env_name, env_town, port in [(cfg.env_id, cfg.town, port)]])
+    env = DummyVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town, port=port, seed=seed) for env_name, env_town, port in [(cfg.env_id, cfg.town, port)]])
     # env = DummyVecEnv([make_env(env_name=cfg.env_id, town=cfg.town)])
     
-    agent = PpoPolicy(env.observation_space, env.action_space).to(device)
+    agent = PpoPolicy(env.observation_space, env.action_space, distribution_kwargs=cfg.agent.distribution_kwargs).to(device)
 
     optimizer = optim.Adam(agent.parameters(), lr=cfg.agent.learning_rate, eps=1e-5)
 
