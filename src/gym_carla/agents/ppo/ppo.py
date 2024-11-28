@@ -192,8 +192,8 @@ def run_single_experiment(cfg, seed, save_path):
 
     obs = {}
     for k, s in env.observation_space.spaces.items():
-        obs[k] = torch.zeros((cfg.num_steps, env.num_envs,) + s.shape, dtype=torch.uint8).to(device)
-    actions = torch.zeros((cfg.num_steps, cfg.num_envs) + env.action_space.shape, dtype=torch.float32).to(
+        obs[k] = torch.zeros((cfg.num_steps, env.num_envs,) + s.shape).to(device)
+    actions = torch.zeros((cfg.num_steps, cfg.num_envs) + env.action_space.shape).to(
         device
     )
     logprobs = torch.zeros((cfg.num_steps, cfg.num_envs)).to(device)
@@ -242,7 +242,7 @@ def run_single_experiment(cfg, seed, save_path):
             logprobs[step] = log_prob
 
             next_obs, reward, next_done, infos = env.step(action.cpu().numpy())
-            rewards[step] = torch.tensor(reward).to(device).view(-1)
+            rewards[step] = torch.Tensor(reward).to(device).view(-1)
             next_done = torch.Tensor(next_done).to(device)
 
             print("Step:", step)
@@ -292,7 +292,7 @@ def run_single_experiment(cfg, seed, save_path):
             start_ep = max(len(ep_start_idx)-cfg.save_last_n, 0)
             for i, start_step in enumerate(ep_start_idx[start_ep:]):
                 ep = i+start_ep
-                images = [obs['birdeye'][start_step+j, 0].cpu().numpy() for j in range(ep_lens[ep])]
+                images = [obs['birdeye'][start_step+j, 0].cpu().numpy().astype(np.uint8) for j in range(ep_lens[ep])]
                 width, height = images[0].shape[:2]
                 out = cv2.VideoWriter(f"{save_path}/ep_{ep}.mp4", cv2.VideoWriter_fourcc(*'mp4v'), 10, (width, height))
                 for img in images:
