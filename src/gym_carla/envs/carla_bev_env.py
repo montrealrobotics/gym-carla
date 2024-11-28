@@ -12,14 +12,12 @@ import numpy as np
 import pygame
 import random
 import time
-from skimage.transform import resize
 
 import gym
 from gym import spaces
 from gym.utils import seeding
 import carla
 
-from cv2 import cv2
 from carla_birdeye_view import BirdViewProducer, BirdViewCropType, PixelDimensions
 from gym_carla.envs.route_planner import RoutePlanner
 from gym_carla.envs.misc import *
@@ -72,7 +70,7 @@ class CarlaBEVEnv(gym.Env):
       params['continuous_steer_range'][1]]), dtype=np.float32)  # acc, steer
     observation_space_dict = {
       # 'camera': spaces.Box(low=0, high=255, shape=(self.display_size[0], self.display_size[1], 3), dtype=np.uint8),
-      'birdeye': spaces.Box(low=0, high=1, shape=(self.display_size[0], self.display_size[1], 10), dtype=np.uint8),
+      'birdeye': spaces.Box(low=0, high=255, shape=(self.display_size[0], self.display_size[1], 3), dtype=np.uint8),
       'state': spaces.Box(np.array([-2, -1, -5, 0]), np.array([2, 1, 30, 1]), dtype=np.float32)
       }
     if self.pixor:
@@ -88,18 +86,18 @@ class CarlaBEVEnv(gym.Env):
     print('connecting to Carla server...')
     self.client = carla.Client('localhost', self._port)
     self.client.set_timeout(10.0)
-    self.world = self.client.load_world(params['town'])
+    self._world = self.client.load_world(params['town'])
     print('Carla server connected!')
 
     # Set weather
-    self.world.set_weather(carla.WeatherParameters.ClearNoon)
+    self._world.set_weather(carla.WeatherParameters.ClearNoon)
 
     # Get spawn points
-    self.vehicle_spawn_points = list(self.world.get_map().get_spawn_points())
+    self.vehicle_spawn_points = list(self._world.get_map().get_spawn_points())
     self.walker_spawn_points = []
     for i in range(self.number_of_walkers):
       spawn_point = carla.Transform()
-      loc = self.world.get_random_location_from_navigation()
+      loc = self._world.get_random_location_from_navigation()
       if (loc != None):
         spawn_point.location = loc
         self.walker_spawn_points.append(spawn_point)
@@ -110,12 +108,12 @@ class CarlaBEVEnv(gym.Env):
     # Collision sensor
     self.collision_hist = [] # The collision history
     self.collision_hist_l = 1 # collision history length
-    self.collision_bp = self.world.get_blueprint_library().find('sensor.other.collision')
+    self.collision_bp = self._world.get_blueprint_library().find('sensor.other.collision')
 
     # Camera sensor
     # self.camera_img = np.zeros((self.display_size[0], self.display_size[1], 3), dtype=np.uint8)
     # self.camera_trans = carla.Transform(carla.Location(x=0.8, z=1.7))
-    # self.camera_bp = self.world.get_blueprint_library().find('sensor.camera.rgb')
+    # self.camera_bp = self._world.get_blueprint_library().find('sensor.camera.rgb')
     # # Modify the attributes of the blueprint to set image resolution and field of view.
     # self.camera_bp.set_attribute('image_size_x', str(self.display_size[0]))
     # self.camera_bp.set_attribute('image_size_y', str(self.display_size[1]))
@@ -124,7 +122,7 @@ class CarlaBEVEnv(gym.Env):
     # self.camera_bp.set_attribute('sensor_tick', '0.02')
 
     # Set fixed simulation step for synchronous mode
-    self.settings = self.world.get_settings()
+    self.settings = self._world.get_settings()
     self.settings.fixed_delta_seconds = self.dt
 
     # Disable rendering if not using camera
@@ -207,7 +205,7 @@ class CarlaBEVEnv(gym.Env):
         time.sleep(0.1)
 
     # Add collision sensor
-    self.collision_sensor = self.world.spawn_actor(self.collision_bp, carla.Transform(), attach_to=self.ego)
+    self.collision_sensor = self._world.spawn_actor(self.collision_bp, carla.Transform(), attach_to=self.ego)
     self.collision_sensor.listen(lambda event: get_collision_hist(event))
     def get_collision_hist(event):
       impulse = event.normal_impulse
@@ -218,7 +216,7 @@ class CarlaBEVEnv(gym.Env):
     self.collision_hist = []
 
     # Add camera sensor
-    # self.camera_sensor = self.world.spawn_actor(self.camera_bp, self.camera_trans, attach_to=self.ego)
+    # self.camera_sensor = self._world.spawn_actor(self.camera_bp, self.camera_trans, attach_to=self.ego)
     # self.camera_sensor.listen(lambda data: get_camera_img(data))
     # def get_camera_img(data):
     #   array = np.frombuffer(data.raw_data, dtype = np.dtype("uint8"))
@@ -233,7 +231,7 @@ class CarlaBEVEnv(gym.Env):
 
     # Enable sync mode
     self.settings.synchronous_mode = True
-    self.world.apply_settings(self.settings)
+    self._world.apply_settings(self.settings)
 
     self.routeplanner = RoutePlanner(self.ego, self.max_waypt)
     self.waypoints, _, self.vehicle_front = self.routeplanner.run_step()
@@ -264,7 +262,7 @@ class CarlaBEVEnv(gym.Env):
     act = carla.VehicleControl(throttle=float(throttle), steer=float(-steer), brake=float(brake))
     self.ego.apply_control(act)
 
-    self.world.tick()
+    self._world.tick()
 
     # Append actors polygon list
     vehicle_poly_dict = self._get_actor_polygons('vehicle.*')
@@ -307,7 +305,7 @@ class CarlaBEVEnv(gym.Env):
     Returns:
       bp: the blueprint object of carla.
     """
-    blueprints = self.world.get_blueprint_library().filter(actor_filter)
+    blueprints = self._world.get_blueprint_library().filter(actor_filter)
     blueprint_library = []
     for nw in number_of_wheels:
       blueprint_library = blueprint_library + [x for x in blueprints if int(x.get_attribute('number_of_wheels')) == nw]
@@ -340,7 +338,7 @@ class CarlaBEVEnv(gym.Env):
     """Set whether to use the synchronous mode.
     """
     self.settings.synchronous_mode = synchronous
-    self.world.apply_settings(self.settings)
+    self._world.apply_settings(self.settings)
 
   def _try_spawn_random_vehicle_at(self, transform, number_of_wheels=[4]):
     """Try to spawn a surrounding vehicle at specific transform with random bluprint.
@@ -353,7 +351,7 @@ class CarlaBEVEnv(gym.Env):
     """
     blueprint = self._create_vehicle_bluepprint('vehicle.*', number_of_wheels=number_of_wheels)
     blueprint.set_attribute('role_name', 'autopilot')
-    vehicle = self.world.try_spawn_actor(blueprint, transform)
+    vehicle = self._world.try_spawn_actor(blueprint, transform)
     if vehicle is not None:
       vehicle.set_autopilot(tm_port=self._port+6000)
       return True
@@ -368,19 +366,19 @@ class CarlaBEVEnv(gym.Env):
     Returns:
       Bool indicating whether the spawn is successful.
     """
-    walker_bp = random.choice(self.world.get_blueprint_library().filter('walker.*'))
+    walker_bp = random.choice(self._world.get_blueprint_library().filter('walker.*'))
     # set as not invencible
     if walker_bp.has_attribute('is_invincible'):
       walker_bp.set_attribute('is_invincible', 'false')
-    walker_actor = self.world.try_spawn_actor(walker_bp, transform)
+    walker_actor = self._world.try_spawn_actor(walker_bp, transform)
 
     if walker_actor is not None:
-      walker_controller_bp = self.world.get_blueprint_library().find('controller.ai.walker')
-      walker_controller_actor = self.world.spawn_actor(walker_controller_bp, carla.Transform(), walker_actor)
+      walker_controller_bp = self._world.get_blueprint_library().find('controller.ai.walker')
+      walker_controller_actor = self._world.spawn_actor(walker_controller_bp, carla.Transform(), walker_actor)
       # start walker
       walker_controller_actor.start()
       # set walk to random point
-      walker_controller_actor.go_to_location(self.world.get_random_location_from_navigation())
+      walker_controller_actor.go_to_location(self._world.get_random_location_from_navigation())
       # random max speed
       walker_controller_actor.set_max_speed(1 + random.random())    # max speed between 1 and 2 (default is 1.4 m/s)
       return True
@@ -407,7 +405,7 @@ class CarlaBEVEnv(gym.Env):
         break
 
     if not overlap:
-      vehicle = self.world.try_spawn_actor(self.ego_bp, transform)
+      vehicle = self._world.try_spawn_actor(self.ego_bp, transform)
 
     if vehicle is not None:
       self.ego=vehicle
@@ -425,7 +423,7 @@ class CarlaBEVEnv(gym.Env):
       actor_poly_dict: a dictionary containing the bounding boxes of specific actors.
     """
     actor_poly_dict={}
-    for actor in self.world.get_actors().filter(filt):
+    for actor in self._world.get_actors().filter(filt):
       # Get x, y and yaw of the actor
       trans=actor.get_transform()
       x=trans.location.x
@@ -451,10 +449,10 @@ class CarlaBEVEnv(gym.Env):
     birdeye = self.birdeye_render.produce(
         agent_vehicle=self.ego  # carla.Actor (spawned vehicle)
     )
+    birdeye_rgb = BirdViewProducer.as_rgb(birdeye).astype(np.uint8)
 
     # Display birdeye image
     if not self._headless:
-      birdeye_rgb = BirdViewProducer.as_rgb(birdeye).astype("uint8")
       birdeye_surface = rgb_to_display_surface(birdeye_rgb, self.display_size)
       self.display.blit(birdeye_surface, (0, 0))
 
@@ -486,7 +484,7 @@ class CarlaBEVEnv(gym.Env):
 
       # Generate the PIXOR image. Note in CARLA it is using left-hand coordinate
       # Get the 6-dim geom parametrization in PIXOR, here we use pixel coordinate
-      for actor in self.world.get_actors().filter('vehicle.*'):
+      for actor in self._world.get_actors().filter('vehicle.*'):
         x, y, yaw, l, w = get_info(actor)
         x_local, y_local, yaw_local = get_local_pose((x, y, yaw), (ego_x, ego_y, ego_yaw))
         if actor.id != self.ego.id:
@@ -517,7 +515,7 @@ class CarlaBEVEnv(gym.Env):
 
     obs = {
       # 'camera':camera.astype(np.uint8),
-      'birdeye':birdeye.astype(np.uint8),
+      'birdeye': birdeye_rgb,
       'state': state,
     }
 
@@ -597,8 +595,19 @@ class CarlaBEVEnv(gym.Env):
   def _clear_all_actors(self, actor_filters):
     """Clear specific actors."""
     for actor_filter in actor_filters:
-      for actor in self.world.get_actors().filter(actor_filter):
+      for actor in self._world.get_actors().filter(actor_filter):
         if actor.is_alive:
           if actor.type_id == 'controller.ai.walker':
             actor.stop()
           actor.destroy()
+    
+  def __exit__(self, exception_type, exception_value, traceback):
+    self.close()
+  
+  def close(self):
+    self._clear_all_actors(['sensor.other.collision', 'vehicle.*', 'controller.ai.walker', 'walker.*']) 
+    self._world.tick()
+    self._set_synchronous_mode(False)
+    self._client = None
+    self._world = None
+    self._tm = None

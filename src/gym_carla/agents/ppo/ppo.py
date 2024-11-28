@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 import gym
 import numpy as np
+import cv2
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -116,6 +117,7 @@ def make_env(
     display_route=True,
     pixor_size=64,
     pixor=False,
+    headless=True,
 ):
     """Loads train and eval environments."""
     env_params = {
@@ -144,6 +146,7 @@ def make_env(
         "display_route": display_route,  # whether to render the desired route
         "pixor_size": pixor_size,  # size of the pixor labels
         "pixor": pixor,  # whether to output PIXOR observation
+        "headless": headless,
     }
 
     gym_spec = gym.spec(env_name)
@@ -152,25 +155,15 @@ def make_env(
     return env
 
 
-def run_single_experiment(cfg, seed, save_path):
+def run_single_experiment(cfg, seed, save_path, port):
     exp_name = os.path.basename(__file__)[: -len(".py")]
-    # args = tyro.cli(Args)
     cfg.agent.batch_size = int(cfg.num_envs * cfg.num_steps)
     cfg.agent.minibatch_size = int(cfg.agent.batch_size // cfg.agent.num_minibatches)
+    print("batch size: ", cfg.agent.batch_size)
+    print("Minibatch size set as :", cfg.agent.minibatch_size)
     cfg.num_iterations = cfg.total_timesteps // cfg.agent.batch_size
     run_name = f"{cfg.env_id}__{exp_name}__{cfg.seed}__{int(time.time())}"
-    # if args.track:
-    #     import wandb
 
-    #     wandb.init(
-    #         project=args.wandb_project_name,
-    #         entity=args.wandb_entity,
-    #         sync_tensorboard=True,
-    #         config=vars(args),
-    #         name=run_name,
-    #         monitor_gym=True,
-    #         save_code=True,
-    #     )
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
         "hyperparameters",
@@ -182,7 +175,7 @@ def run_single_experiment(cfg, seed, save_path):
     # device = "cpu"
 
     # TODO: eventually we want many envs!!
-    env = DummyVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town) for env_name, env_town in [(cfg.env_id, cfg.town)]])
+    env = DummyVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town, port=port) for env_name, env_town, port in [(cfg.env_id, cfg.town, port)]])
     # env = DummyVecEnv([make_env(env_name=cfg.env_id, town=cfg.town)])
     
     agent = PpoPolicy(env.observation_space, env.action_space).to(device)
@@ -203,7 +196,7 @@ def run_single_experiment(cfg, seed, save_path):
     random.seed(cfg.seed)
     np.random.seed(cfg.seed)
     torch.manual_seed(cfg.seed)
-    torch.backends.cudnn.deterministic = cfg.torch_deterministic
+    # torch.backends.cudnn.deterministic = cfg.torch_deterministic
     env.action_space.seed(cfg.seed)
     env.observation_space.seed(cfg.seed)
     env.seed(cfg.seed)
@@ -214,10 +207,9 @@ def run_single_experiment(cfg, seed, save_path):
     kl_early_stop = 0
     t_train_values = 0.0
 
-    next_obs = env.reset()
-    next_done = torch.zeros(env.num_envs).to(device)
-
     for iteration in range(1, cfg.num_iterations + 1):
+        next_obs = env.reset()
+        next_done = torch.zeros(env.num_envs).to(device)
         print("Iteration:", iteration)
         # Annealing the rate if instructed to do so.
         if cfg.agent.anneal_lr:
@@ -226,6 +218,8 @@ def run_single_experiment(cfg, seed, save_path):
             optimizer.param_groups[0]["lr"] = lrnow
 
         print("Collecting experience...")
+        ep_start_idx = [0]
+        ep_lens = []
         for step in range(0, cfg.num_steps):
             global_step += cfg.num_envs
             for k, v in next_obs.items():
@@ -239,19 +233,22 @@ def run_single_experiment(cfg, seed, save_path):
             logprobs[step] = log_prob
 
             next_obs, reward, next_done, infos = env.step(action.cpu().numpy())
-            rewards[step] = torch.tensor(reward).to(device).view(-1)
+            rewards[step] = torch.Tensor(reward).to(device).view(-1)
             next_done = torch.Tensor(next_done).to(device)
 
             print("Step:", step)
-            # if "final_info" in infos:
-                # print(">>> if final_info in infos")
-                # for info in infos["final_info"]:
-                #     print("for info in infos[\"final_info\"]")
+            if "final_info" in infos:
+                print(">>> if final_info in infos")
+                for info in infos["final_info"]:
+                    print("for info in infos[\"final_info\"]")
             for info in infos:
                 if(next_done or step == (cfg.num_steps-1)):
                     if "episode" in info["final_info"]:
                         ret = info["final_info"]["episode"]["r"]
                         ep_len = info["final_info"]["episode"]["l"]
+                        ep_lens.append(int(ep_len))
+                        if step < cfg.num_steps-1:
+                            ep_start_idx.append(step)
                         print(
                             f"global_step={global_step}, episodic_return={ret}"
                         )
@@ -281,6 +278,19 @@ def run_single_experiment(cfg, seed, save_path):
                     delta + cfg.agent.gamma * cfg.agent.gae_lambda * nextnonterminal * lastgaelam
                 )
             returns = advantages + values
+        
+        if cfg.save_video:
+            start_ep = max(len(ep_start_idx)-cfg.save_last_n, 0)
+            for i, start_step in enumerate(ep_start_idx[start_ep:]):
+                ep = i+start_ep
+                images = [obs['birdeye'][start_step+j, 0].cpu().numpy().astype(np.uint8) for j in range(ep_lens[ep])]
+                width, height = images[0].shape[:2]
+                out = cv2.VideoWriter(f"{save_path}/ep_{ep}.mp4", cv2.VideoWriter_fourcc(*'mp4v'), 10, (width, height))
+                for img in images:
+                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    out.write(img)
+                print(f"Saving video to {save_path}/ep_{ep}.mp4")
+                out.release()
 
         # flatten the batch
         b_obs = {}
@@ -392,10 +402,19 @@ def run_single_experiment(cfg, seed, save_path):
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def run_experiment(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
+    # os.environ["SDL_VIDEODRIVER"] = "dummy"
     save_path = HydraConfig.get().runtime.output_dir
     print(">>> Storing outputs in: ", save_path)
     os.makedirs("./results", exist_ok=True) # TODO: where we'll store results. we need to decide on which stats.
-    run_single_experiment(cfg, cfg.seed, save_path)
+    
+    gpu_id = HydraConfig.get().job.num % cfg.num_gpus
+    print("gpu id:", gpu_id)
+    print("---------------")
+    port = (gpu_id + 4)*1000
+    
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    run_single_experiment(cfg, cfg.seed, save_path, port)
 
 if __name__ == "__main__":
     run_experiment()
