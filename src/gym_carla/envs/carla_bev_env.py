@@ -607,7 +607,7 @@ class CarlaBEVEnv(gym.Env):
   def close(self):
     self._clear_all_actors(['sensor.other.collision', 'vehicle.*', 'controller.ai.walker', 'walker.*']) 
     self._world.tick()
-    self.set_sync_mode(False)
+    self._set_synchronous_mode(False)
     self._client = None
     self._world = None
     self._tm = None
