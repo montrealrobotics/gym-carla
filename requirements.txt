@@ -8,3 +8,4 @@ tyro==0.9.1
 carla-birdeye-view @ git+https://github.com/akuramshin/carla-birdeye-view@main
 hydra-core==1.3.2
 hydra-joblib-launcher==1.2.0
+opencv-python==4.5.5.64
