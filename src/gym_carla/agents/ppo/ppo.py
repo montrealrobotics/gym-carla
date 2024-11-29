@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 import gym
 import numpy as np
+import cv2
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -91,7 +92,7 @@ import hydra
 
 def make_env(
     env_name="carla-bev-v0",
-    number_of_vehicles=100,
+    number_of_vehicles=25,
     number_of_walkers=0,
     display_size=256,
     max_past_step=1,
@@ -99,9 +100,9 @@ def make_env(
     discrete=False,
     discrete_acc=[-3.0, 0.0, 3.0],
     discrete_steer=[-0.2, 0.0, 0.2],
-    continuous_accel_range=[-3.0, 3.0],
+    continuous_accel_range=[-1.0, 1.0],
     continuous_steer_range=[-0.3, 0.3],
-    ego_vehicle_filter="vehicle.lincoln*",
+    ego_vehicle_filter="vehicle.audi.a2",
     port=4000,
     town="Town03",
     task_mode="random",
@@ -116,6 +117,8 @@ def make_env(
     display_route=True,
     pixor_size=64,
     pixor=False,
+    seed=None,
+    headless=True,
 ):
     """Loads train and eval environments."""
     env_params = {
@@ -144,6 +147,8 @@ def make_env(
         "display_route": display_route,  # whether to render the desired route
         "pixor_size": pixor_size,  # size of the pixor labels
         "pixor": pixor,  # whether to output PIXOR observation
+        "seed": seed,
+        "headless": headless,
     }
 
     gym_spec = gym.spec(env_name)
@@ -172,10 +177,10 @@ def run_single_experiment(cfg, seed, save_path, port):
     # device = "cpu"
 
     # TODO: eventually we want many envs!!
-    env = DummyVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town, port=port) for env_name, env_town, port in [(cfg.env_id, cfg.town, port)]])
+    env = DummyVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town, port=port, seed=seed) for env_name, env_town, port in [(cfg.env_id, cfg.town, port)]])
     # env = DummyVecEnv([make_env(env_name=cfg.env_id, town=cfg.town)])
     
-    agent = PpoPolicy(env.observation_space, env.action_space).to(device)
+    agent = PpoPolicy(env.observation_space, env.action_space, distribution_kwargs=cfg.agent.distribution_kwargs).to(device)
 
     optimizer = optim.Adam(agent.parameters(), lr=cfg.agent.learning_rate, eps=1e-5)
 
@@ -204,10 +209,9 @@ def run_single_experiment(cfg, seed, save_path, port):
     kl_early_stop = 0
     t_train_values = 0.0
 
-    next_obs = env.reset()
-    next_done = torch.zeros(env.num_envs).to(device)
-
     for iteration in range(1, cfg.num_iterations + 1):
+        next_obs = env.reset()
+        next_done = torch.zeros(env.num_envs).to(device)
         print("Iteration:", iteration)
         # Annealing the rate if instructed to do so.
         if cfg.agent.anneal_lr:
@@ -216,6 +220,8 @@ def run_single_experiment(cfg, seed, save_path, port):
             optimizer.param_groups[0]["lr"] = lrnow
 
         print("Collecting experience...")
+        ep_start_idx = [0]
+        ep_lens = []
         for step in range(0, cfg.num_steps):
             global_step += cfg.num_envs
             for k, v in next_obs.items():
@@ -229,7 +235,7 @@ def run_single_experiment(cfg, seed, save_path, port):
             logprobs[step] = log_prob
 
             next_obs, reward, next_done, infos = env.step(action.cpu().numpy())
-            rewards[step] = torch.tensor(reward).to(device).view(-1)
+            rewards[step] = torch.Tensor(reward).to(device).view(-1)
             next_done = torch.Tensor(next_done).to(device)
 
             print("Step:", step)
@@ -242,6 +248,9 @@ def run_single_experiment(cfg, seed, save_path, port):
                     if "episode" in info["final_info"]:
                         ret = info["final_info"]["episode"]["r"]
                         ep_len = info["final_info"]["episode"]["l"]
+                        ep_lens.append(int(ep_len))
+                        if step < cfg.num_steps-1:
+                            ep_start_idx.append(step)
                         print(
                             f"global_step={global_step}, episodic_return={ret}"
                         )
@@ -271,6 +280,19 @@ def run_single_experiment(cfg, seed, save_path, port):
                     delta + cfg.agent.gamma * cfg.agent.gae_lambda * nextnonterminal * lastgaelam
                 )
             returns = advantages + values
+        
+        if cfg.save_video:
+            start_ep = max(len(ep_start_idx)-cfg.save_last_n, 0)
+            for i, start_step in enumerate(ep_start_idx[start_ep:]):
+                ep = i+start_ep
+                images = [obs['birdeye'][start_step+j, 0].cpu().numpy().astype(np.uint8) for j in range(ep_lens[ep])]
+                width, height = images[0].shape[:2]
+                out = cv2.VideoWriter(f"{save_path}/ep_{ep}.mp4", cv2.VideoWriter_fourcc(*'mp4v'), 10, (width, height))
+                for img in images:
+                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    out.write(img)
+                print(f"Saving video to {save_path}/ep_{ep}.mp4")
+                out.release()
 
         # flatten the batch
         b_obs = {}
@@ -382,7 +404,7 @@ def run_single_experiment(cfg, seed, save_path, port):
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def run_experiment(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
-    os.environ["SDL_VIDEODRIVER"] = "dummy"
+    # os.environ["SDL_VIDEODRIVER"] = "dummy"
     save_path = HydraConfig.get().runtime.output_dir
     print(">>> Storing outputs in: ", save_path)
     os.makedirs("./results", exist_ok=True) # TODO: where we'll store results. we need to decide on which stats.
