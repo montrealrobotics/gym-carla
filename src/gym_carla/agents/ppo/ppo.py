@@ -316,7 +316,7 @@ def run_single_experiment(cfg, seed, save_path, port):
                 end = start + cfg.agent.minibatch_size
                 mb_inds = b_inds[start:end]
 
-                newvalue, newlogprob, entropy, _ = agent.evaluate_actions(
+                newvalue, newlogprob, entropy_loss, _ = agent.evaluate_actions(
                     {k: b_obs[k][mb_inds] for k in b_obs.keys()}, b_actions[mb_inds]
                 )
                 logratio = newlogprob - b_logprobs[mb_inds]
@@ -352,7 +352,6 @@ def run_single_experiment(cfg, seed, save_path, port):
                 else:
                     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
-                entropy_loss = entropy.mean()
                 loss = pg_loss - cfg.agent.ent_coef * entropy_loss + v_loss * cfg.agent.vf_coef
 
                 optimizer.zero_grad()
