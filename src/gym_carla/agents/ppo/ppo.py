@@ -95,7 +95,8 @@ def make_env(
     number_of_vehicles=25,
     number_of_walkers=0,
     display_size=256,
-    max_past_step=1,
+    max_past_step=3,
+    delta_past_step=5,
     dt=0.1,
     discrete=False,
     discrete_acc=[-3.0, 0.0, 3.0],
@@ -106,7 +107,7 @@ def make_env(
     port=4000,
     town="Town03",
     task_mode="random",
-    max_time_episode=500,
+    max_time_episode=512,
     max_waypt=12,
     obs_range=32,
     lidar_bin=0.25,
@@ -126,6 +127,7 @@ def make_env(
         "number_of_walkers": number_of_walkers,
         "display_size": display_size,  # screen size of bird-eye render
         "max_past_step": max_past_step,  # the number of past steps to draw
+        "delta_past_step": delta_past_step,
         "dt": dt,  # time interval between two frames
         "discrete": discrete,  # whether to use discrete control space
         "discrete_acc": discrete_acc,  # discrete value of accelerations
@@ -248,6 +250,8 @@ def run_single_experiment(cfg, seed, save_path, port):
                     if "episode" in info["final_info"]:
                         ret = info["final_info"]["episode"]["r"]
                         ep_len = info["final_info"]["episode"]["l"]
+                        if info["collision"]:
+                            raise ImportError
                         ep_lens.append(int(ep_len))
                         if step < cfg.num_steps-1:
                             ep_start_idx.append(step)
