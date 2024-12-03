@@ -17,6 +17,19 @@ from matplotlib.path import Path
 import skimage
 from cv2 import cv2
 
+from stable_baselines3.common.vec_env import DummyVecEnv
+
+
+class CarlaDummVecEnv(DummyVecEnv):
+  def reset(self, *args, **kwargs):
+    for env_idx in range(self.num_envs):
+        obs = self.envs[env_idx].reset(*args, **kwargs)
+        self._save_obs(env_idx, obs)
+    return self._obs_from_buf()
+  
+  def clean(self):
+    for env_idx in range(self.num_envs):
+      self.envs[env_idx].clean()
 
 def get_speed(vehicle):
   """
