@@ -240,10 +240,8 @@ def run_single_experiment(cfg, seed, save_path, port):
             next_done = torch.Tensor(next_done).to(device)
 
             print("Step:", step)
-            if "final_info" in infos:
-                print(">>> if final_info in infos")
-                for info in infos["final_info"]:
-                    print("for info in infos[\"final_info\"]")
+            
+            
             for info in infos:
                 if(next_done or step == (cfg.num_steps-1)):
                     if "episode" in info["final_info"]:
