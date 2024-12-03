@@ -7,7 +7,7 @@ hydra:
   launcher:
     n_jobs: 2
   sweep:
-    dir: results
+    dir: results/default_experiment
     subdir: ${hydra.job.override_dirname}/seed=${seed}
   job:
     config:
@@ -20,7 +20,7 @@ hydra:
 seed: 1
 torch_deterministic: true
 cuda: true
-save_model: false
+save_model: true
 town: "Town03"
 env_id: "carla-bev-v0"
 num_envs: 1

@@ -210,6 +210,8 @@ def run_single_experiment(cfg, seed, save_path, port):
     kl_early_stop = 0
     t_train_values = 0.0
 
+    episodic_rewards_list = []
+    episodic_lens_list = []
     for iteration in range(1, cfg.num_iterations + 1):
         next_obs = env.reset()
         next_done = torch.zeros(env.num_envs).to(device)
@@ -250,6 +252,9 @@ def run_single_experiment(cfg, seed, save_path, port):
                         ep_lens.append(int(ep_len))
                         if step < cfg.num_steps-1:
                             ep_start_idx.append(step)
+                        
+                        episodic_rewards_list.append(ret)
+                        episodic_lens_list.append(ep_lens)
                         print(
                             f"global_step={global_step}, episodic_return={ret}"
                         )
@@ -378,9 +383,13 @@ def run_single_experiment(cfg, seed, save_path, port):
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
     if cfg.save_model:
-        model_path = f"runs/{run_name}/{exp_name}.cleanrl_model"
+        model_path = f"{save_path}/policy.cleanrl_model"
         torch.save(agent.state_dict(), model_path)
         print(f"model saved to {model_path}")
+        
+        np.save(f"{save_path}/episodic_rewards.npy", np.array(episodic_rewards_list))
+        np.save(f"{save_path}/episodic_lens.npy", np.array(episodic_lens_list))
+        
         # from cleanrl_utils.evals.ppo_eval import evaluate
 
         # episodic_returns = evaluate(
@@ -405,7 +414,8 @@ def run_experiment(cfg: DictConfig) -> None:
     # os.environ["SDL_VIDEODRIVER"] = "dummy"
     save_path = HydraConfig.get().runtime.output_dir
     print(">>> Storing outputs in: ", save_path)
-    os.makedirs("./results", exist_ok=True) # TODO: where we'll store results. we need to decide on which stats.
+    # print("Experiment dir: ", cfg.hydra.sweep.dir)
+    os.makedirs(save_path, exist_ok=True) # TODO: where we'll store results. we need to decide on which stats.
     
     gpu_id = HydraConfig.get().job.num % cfg.num_gpus
     print("gpu id:", gpu_id)
@@ -415,6 +425,7 @@ def run_experiment(cfg: DictConfig) -> None:
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     run_single_experiment(cfg, cfg.seed, save_path, port)
+    print("Experiment done!")
 
 if __name__ == "__main__":
     run_experiment()
