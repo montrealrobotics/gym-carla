@@ -24,8 +24,8 @@ save_model: false
 town: "Town03"
 env_id: "carla-bev-v0"
 num_envs: 1
-num_steps: 256
-total_timesteps: 1024
+num_steps: 1024
+total_timesteps: 1048576 #65536
 num_iterations: 0
 num_gpus: 2
 save_last_n: 2

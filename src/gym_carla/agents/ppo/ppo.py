@@ -12,13 +12,15 @@ import torch.optim as optim
 import tyro
 from torch.utils.tensorboard import SummaryWriter
 
-from stable_baselines3.common.vec_env import DummyVecEnv
-
 from gym_carla.agents.birdview.birdview_wrapper import BirdviewWrapper
 from gym_carla.agents.ppo.ppo_policy import PpoPolicy
+from gym_carla.envs.misc import CarlaDummVecEnv
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 import hydra
+import logging
+
+log = logging.getLogger(__name__)
 
 # @dataclass
 # class Args:
@@ -92,7 +94,7 @@ import hydra
 
 def make_env(
     env_name="carla-bev-v0",
-    number_of_vehicles=25,
+    number_of_vehicles=50,
     number_of_walkers=0,
     display_size=256,
     max_past_step=3,
@@ -116,8 +118,6 @@ def make_env(
     desired_speed=8,
     max_ego_spawn_times=200,
     display_route=True,
-    pixor_size=64,
-    pixor=False,
     seed=None,
     headless=True,
 ):
@@ -147,14 +147,11 @@ def make_env(
         "desired_speed": desired_speed,  # desired speed (m/s)
         "max_ego_spawn_times": max_ego_spawn_times,  # maximum times to spawn ego vehicle
         "display_route": display_route,  # whether to render the desired route
-        "pixor_size": pixor_size,  # size of the pixor labels
-        "pixor": pixor,  # whether to output PIXOR observation
         "seed": seed,
         "headless": headless,
     }
 
-    gym_spec = gym.spec(env_name)
-    env = gym_spec.make(params=env_params)
+    env = gym.make(env_name, params=env_params)
     env = BirdviewWrapper(env)
     return env
 
@@ -179,7 +176,7 @@ def run_single_experiment(cfg, seed, save_path, port):
     # device = "cpu"
 
     # TODO: eventually we want many envs!!
-    env = DummyVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town, port=port, seed=seed) for env_name, env_town, port in [(cfg.env_id, cfg.town, port)]])
+    env = CarlaDummVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town, port=port, seed=seed) for env_name, env_town, port in [(cfg.env_id, cfg.town, port)]])
     # env = DummyVecEnv([make_env(env_name=cfg.env_id, town=cfg.town)])
     
     agent = PpoPolicy(env.observation_space, env.action_space, distribution_kwargs=cfg.agent.distribution_kwargs).to(device)
@@ -211,6 +208,7 @@ def run_single_experiment(cfg, seed, save_path, port):
     kl_early_stop = 0
     t_train_values = 0.0
 
+    collision_scenarios = []
     for iteration in range(1, cfg.num_iterations + 1):
         next_obs = env.reset()
         next_done = torch.zeros(env.num_envs).to(device)
@@ -229,6 +227,13 @@ def run_single_experiment(cfg, seed, save_path, port):
             for k, v in next_obs.items():
                 obs[k][step] = torch.Tensor(v).to(device)
             dones[step] = next_done
+            if next_done:
+                # Do this with probability p
+                if len(collision_scenarios) > 0:
+                    log.info(f"collision scenarios: {len(collision_scenarios)}")
+                    next_obs = env.reset(vehicle_positions=random.choice(collision_scenarios))
+                else:
+                    next_obs = env.reset()
 
             with torch.no_grad():
                 action, value, log_prob, mu, sigma, _ = agent.forward(next_obs)
@@ -240,7 +245,7 @@ def run_single_experiment(cfg, seed, save_path, port):
             rewards[step] = torch.Tensor(reward).to(device).view(-1)
             next_done = torch.Tensor(next_done).to(device)
 
-            print("Step:", step)
+            # print("Step:", step)
             if "final_info" in infos:
                 print(">>> if final_info in infos")
                 for info in infos["final_info"]:
@@ -250,8 +255,6 @@ def run_single_experiment(cfg, seed, save_path, port):
                     if "episode" in info["final_info"]:
                         ret = info["final_info"]["episode"]["r"]
                         ep_len = info["final_info"]["episode"]["l"]
-                        if info["collision"]:
-                            raise ImportError
                         ep_lens.append(int(ep_len))
                         if step < cfg.num_steps-1:
                             ep_start_idx.append(step)
@@ -264,6 +267,11 @@ def run_single_experiment(cfg, seed, save_path, port):
                         writer.add_scalar(
                             "charts/episodic_length", ep_len, global_step
                         )
+                        if info["collision"]:
+                            log.info("Adding new collision scenario")
+                            collision_scenarios.append(info["vehicle_history"])
+
+        env.clean()
 
         # bootstrap value if not done
         with torch.no_grad():
