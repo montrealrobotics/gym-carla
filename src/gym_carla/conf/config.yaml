@@ -30,3 +30,4 @@ num_iterations: 0
 num_gpus: 2
 save_last_n: 2
 save_video: true
+num_vehicles: 25
