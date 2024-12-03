@@ -177,7 +177,8 @@ def run_single_experiment(cfg, seed, save_path, port):
     # device = "cpu"
 
     # TODO: eventually we want many envs!!
-    env = DummyVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town, port=port, seed=seed) for env_name, env_town, port in [(cfg.env_id, cfg.town, port)]])
+    # enforcing that max steps are more than num steps here
+    env = DummyVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town, port=port, seed=seed, max_time_episode=max_steps, number_of_vehicles=num_vehicles) for env_name, env_town, port, max_steps, num_vehicles  in [(cfg.env_id, cfg.town, port, cfg.num_steps+1, cfg.num_vehicles)]])
     # env = DummyVecEnv([make_env(env_name=cfg.env_id, town=cfg.town)])
     
     agent = PpoPolicy(env.observation_space, env.action_space, distribution_kwargs=cfg.agent.distribution_kwargs).to(device)
