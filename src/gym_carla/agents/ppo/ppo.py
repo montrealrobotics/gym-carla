@@ -12,9 +12,8 @@ import torch.optim as optim
 import tyro
 from torch.utils.tensorboard import SummaryWriter
 
-from stable_baselines3.common.vec_env import DummyVecEnv
-
 from gym_carla.agents.birdview.birdview_wrapper import BirdviewWrapper
+from gym_carla.envs.misc import CarlaDummVecEnv
 from gym_carla.agents.ppo.ppo_policy import PpoPolicy
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
@@ -178,7 +177,7 @@ def run_single_experiment(cfg, seed, save_path, port):
 
     # TODO: eventually we want many envs!!
     # enforcing that max steps are more than num steps here
-    env = DummyVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town, port=port, seed=seed, max_time_episode=max_steps, number_of_vehicles=num_vehicles) for env_name, env_town, port, max_steps, num_vehicles  in [(cfg.env_id, cfg.town, port, cfg.num_steps+1, cfg.num_vehicles)]])
+    env = CarlaDummVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town, port=port, seed=seed, max_time_episode=max_steps, number_of_vehicles=num_vehicles) for env_name, env_town, port, max_steps, num_vehicles  in [(cfg.env_id, cfg.town, port, cfg.num_steps+1, cfg.num_vehicles)]])
     # env = DummyVecEnv([make_env(env_name=cfg.env_id, town=cfg.town)])
     
     agent = PpoPolicy(env.observation_space, env.action_space, distribution_kwargs=cfg.agent.distribution_kwargs).to(device)
@@ -261,6 +260,7 @@ def run_single_experiment(cfg, seed, save_path, port):
                         writer.add_scalar(
                             "charts/episodic_length", ep_len, global_step
                         )
+        env.clean()
 
         # bootstrap value if not done
         with torch.no_grad():

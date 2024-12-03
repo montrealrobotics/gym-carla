@@ -17,8 +17,8 @@ class BirdviewWrapper(gym.Wrapper):
         self.episodic_return = 0.0
         self.episode_steps = 0.0
     
-    def reset(self):
-        observation = self.env.reset()
+    def reset(self, *args, **kwargs):
+        observation = self.env.reset(*args, **kwargs)
         self.episodic_return = 0.0
         self.episode_steps = 0.0
         return self.process_obs(observation)

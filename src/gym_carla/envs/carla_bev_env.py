@@ -237,8 +237,7 @@ class CarlaBEVEnv(gym.Env):
     self.reset_step+=1
 
     # Enable sync mode
-    self.settings.synchronous_mode = True
-    self._world.apply_settings(self.settings)
+    self._set_synchronous_mode(True)
 
     self.routeplanner = RoutePlanner(self.ego, self.max_waypt)
     self.waypoints, _, self.vehicle_front = self.routeplanner.run_step()
@@ -622,3 +621,8 @@ class CarlaBEVEnv(gym.Env):
     self._client = None
     self._world = None
     self._tm = None
+  
+  def clean(self):
+    self._clear_all_actors(['sensor.other.collision', 'vehicle.*', 'controller.ai.walker', 'walker.*']) 
+    self._world.tick()
+    self._set_synchronous_mode(False)
