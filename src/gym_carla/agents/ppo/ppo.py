@@ -18,7 +18,8 @@ from gym_carla.agents.ppo.ppo_policy import PpoPolicy
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 import hydra
-
+from pathlib import Path
+import time
 # @dataclass
 # class Args:
 #     exp_name: str = os.path.basename(__file__)[: -len(".py")]
@@ -240,7 +241,7 @@ def run_single_experiment(cfg, seed, save_path, port):
             rewards[step] = torch.Tensor(reward).to(device).view(-1)
             next_done = torch.Tensor(next_done).to(device)
 
-            print("Step:", step)
+            print("Step:", step, "  Iteration:", iteration)
             
             
             for info in infos:
@@ -410,6 +411,7 @@ def run_single_experiment(cfg, seed, save_path, port):
     
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def run_experiment(cfg: DictConfig) -> None:
+    time.sleep(3)
     print(OmegaConf.to_yaml(cfg))
     # os.environ["SDL_VIDEODRIVER"] = "dummy"
     save_path = HydraConfig.get().runtime.output_dir
@@ -417,15 +419,19 @@ def run_experiment(cfg: DictConfig) -> None:
     # print("Experiment dir: ", cfg.hydra.sweep.dir)
     os.makedirs(save_path, exist_ok=True) # TODO: where we'll store results. we need to decide on which stats.
     
-    gpu_id = HydraConfig.get().job.num % cfg.num_gpus
-    print("gpu id:", gpu_id)
-    print("---------------")
-    port = (gpu_id + 4)*1000
-    
-    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    run_single_experiment(cfg, cfg.seed, save_path, port)
-    print("Experiment done!")
+    result_file = Path(save_path).joinpath("episodic_rewards.npy")
+    if not(result_file.is_file()): # if results aren't there already
+        gpu_id = HydraConfig.get().job.num % cfg.num_gpus
+        print("gpu id:", gpu_id)
+        print("---------------")
+        port = (gpu_id + 4)*1000
+        
+        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+        run_single_experiment(cfg, cfg.seed, save_path, port)
+        print("Experiment done!")
+    else:
+        print("There are already save results for this hyperparam config. Terminating.")
 
 if __name__ == "__main__":
     run_experiment()
