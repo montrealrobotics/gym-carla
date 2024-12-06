@@ -14,7 +14,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from gym_carla.agents.birdview.birdview_wrapper import BirdviewWrapper
 from gym_carla.agents.ppo.ppo_policy import PpoPolicy
-from gym_carla.envs.misc import CarlaDummVecEnv
+from gym_carla.envs.misc import CarlaDummVecEnv, save_video
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 import hydra
@@ -109,7 +109,7 @@ def make_env(
     port=4000,
     town="Town03",
     task_mode="random",
-    max_time_episode=512,
+    max_time_episode=1024,
     max_waypt=12,
     obs_range=32,
     lidar_bin=0.25,
@@ -186,9 +186,7 @@ def run_single_experiment(cfg, seed, save_path, port):
     obs = {}
     for k, s in env.observation_space.spaces.items():
         obs[k] = torch.zeros((cfg.num_steps, env.num_envs,) + s.shape).to(device)
-    actions = torch.zeros((cfg.num_steps, cfg.num_envs) + env.action_space.shape).to(
-        device
-    )
+    actions = torch.zeros((cfg.num_steps, cfg.num_envs) + env.action_space.shape).to(device)
     logprobs = torch.zeros((cfg.num_steps, cfg.num_envs)).to(device)
     rewards = torch.zeros((cfg.num_steps, cfg.num_envs)).to(device)
     dones = torch.zeros((cfg.num_steps, cfg.num_envs)).to(device)
@@ -221,7 +219,10 @@ def run_single_experiment(cfg, seed, save_path, port):
 
         print("Collecting experience...")
         ep_start_idx = [0]
+        collision_scenario_idx = []
+        collision_scenario_lens = []
         ep_lens = []
+        collision_scenario = False
         for step in range(0, cfg.num_steps):
             global_step += cfg.num_envs
             for k, v in next_obs.items():
@@ -229,10 +230,13 @@ def run_single_experiment(cfg, seed, save_path, port):
             dones[step] = next_done
             if next_done:
                 # Do this with probability p
-                if len(collision_scenarios) > 0:
-                    log.info(f"collision scenarios: {len(collision_scenarios)}")
+                if len(collision_scenarios) > 10 and random.random() < cfg.p:
+                    log.info(f"Collision scenarios: {len(collision_scenarios)}")
                     next_obs = env.reset(vehicle_positions=random.choice(collision_scenarios))
+                    collision_scenario = True
+                    collision_scenario_idx.append(step)
                 else:
+                    collision_scenario = False
                     next_obs = env.reset()
 
             with torch.no_grad():
@@ -245,7 +249,7 @@ def run_single_experiment(cfg, seed, save_path, port):
             rewards[step] = torch.Tensor(reward).to(device).view(-1)
             next_done = torch.Tensor(next_done).to(device)
 
-            # print("Step:", step)
+            print("Step:", step)
             if "final_info" in infos:
                 print(">>> if final_info in infos")
                 for info in infos["final_info"]:
@@ -256,6 +260,8 @@ def run_single_experiment(cfg, seed, save_path, port):
                         ret = info["final_info"]["episode"]["r"]
                         ep_len = info["final_info"]["episode"]["l"]
                         ep_lens.append(int(ep_len))
+                        if collision_scenario:
+                            collision_scenario_lens.append(int(ep_len))
                         if step < cfg.num_steps-1:
                             ep_start_idx.append(step)
                         print(
@@ -267,11 +273,11 @@ def run_single_experiment(cfg, seed, save_path, port):
                         writer.add_scalar(
                             "charts/episodic_length", ep_len, global_step
                         )
-                        if info["collision"]:
+                        if info["collision"] and not collision_scenario:
                             log.info("Adding new collision scenario")
                             collision_scenarios.append(info["vehicle_history"])
 
-        env.clean()
+        # env.clean()
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -294,17 +300,9 @@ def run_single_experiment(cfg, seed, save_path, port):
             returns = advantages + values
         
         if cfg.save_video:
-            start_ep = max(len(ep_start_idx)-cfg.save_last_n, 0)
-            for i, start_step in enumerate(ep_start_idx[start_ep:]):
-                ep = i+start_ep
-                images = [obs['birdeye'][start_step+j, 0].cpu().numpy().astype(np.uint8) for j in range(ep_lens[ep])]
-                width, height = images[0].shape[:2]
-                out = cv2.VideoWriter(f"{save_path}/ep_{ep}.mp4", cv2.VideoWriter_fourcc(*'mp4v'), 10, (width, height))
-                for img in images:
-                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    out.write(img)
-                print(f"Saving video to {save_path}/ep_{ep}.mp4")
-                out.release()
+            save_video(obs['birdeye'], ep_start_idx, ep_lens, cfg.save_last_n, save_path)
+            if len(collision_scenario_idx) > 0:
+                save_video(obs['birdeye'], collision_scenario_idx, collision_scenario_lens, 5, save_path + "/collision")
 
         # flatten the batch
         b_obs = {}
@@ -419,6 +417,7 @@ def run_experiment(cfg: DictConfig) -> None:
     save_path = HydraConfig.get().runtime.output_dir
     print(">>> Storing outputs in: ", save_path)
     os.makedirs("./results", exist_ok=True) # TODO: where we'll store results. we need to decide on which stats.
+    os.makedirs(save_path + "/collision", exist_ok=True)
     
     gpu_id = HydraConfig.get().job.num % cfg.num_gpus
     print("gpu id:", gpu_id)

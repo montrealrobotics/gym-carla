@@ -139,45 +139,50 @@ class CarlaBEVEnv(gym.Env):
     self._set_synchronous_mode(False)
 
     # Spawn surrounding vehicles and ego
+    spawned_vehicle_positions = {}
     if vehicle_positions:
-      for time_step in vehicle_positions:
-        self._vehicles = []
-        self._clear_all_actors(['vehicle.*'])
+      for time_step in reversed(vehicle_positions):
         for key, pos in time_step.items():
           if key != "ego":
             spawn_point = carla.Transform(carla.Location(*pos[:3]), carla.Rotation(*pos[3:]))
-            vehicle = self._try_spawn_random_vehicle_at(spawn_point, number_of_wheels=[4])
+            vehicle, loc = self._try_spawn_random_vehicle_at(spawn_point, number_of_wheels=[4])
             if vehicle:
               self._vehicles.append(vehicle)
+              spawned_vehicle_positions[vehicle.id] = loc
             else:
               log.error(f"Could not spawn vehicle at {pos}")
 
         pos = time_step["ego"]
         spawn_point = carla.Transform(carla.Location(*pos[:3]), carla.Rotation(*pos[3:]))
-        vehicle = self._try_spawn_ego_vehicle_at(spawn_point)
+        vehicle, loc = self._try_spawn_ego_vehicle_at(spawn_point)
         if vehicle:
-          self.ego = vehicle
           log.info("Collision scenario!")
+          spawned_vehicle_positions["ego"] = loc
           break
         else:
           log.error(f"Could not spawn ego at {pos}")
-          self.reset()
+          self._vehicles = []
+          self._clear_all_actors(['vehicle.*'])
+      if self.ego is None:
+        self.reset()
 
-    if self.ego is None:
+    if self.ego is None: # Havent spawned ego. Lets sample from initial distribution.
       random.shuffle(self._vehicle_spawn_points)
       count = self.number_of_vehicles
       if count > 0:
         for spawn_point in self._vehicle_spawn_points:
-          vehicle = self._try_spawn_random_vehicle_at(spawn_point, number_of_wheels=[4])
+          vehicle, loc = self._try_spawn_random_vehicle_at(spawn_point, number_of_wheels=[4])
           if vehicle:
             self._vehicles.append(vehicle)
+            spawned_vehicle_positions[vehicle.id] = loc
             count -= 1
           if count <= 0:
             break
       while count > 0:
-        vehicle = self._try_spawn_random_vehicle_at(random.choice(self._vehicle_spawn_points), number_of_wheels=[4])
+        vehicle, loc = self._try_spawn_random_vehicle_at(random.choice(self._vehicle_spawn_points), number_of_wheels=[4])
         if vehicle:
           self._vehicles.append(vehicle)
+          spawned_vehicle_positions[vehicle.id] = loc
           count -= 1
       
       ego_spawn_times = 0
@@ -191,7 +196,9 @@ class CarlaBEVEnv(gym.Env):
           self.start=[52.1+np.random.uniform(-5,5),-4.2, 178.66] # random
           # self.start=[52.1,-4.2, 178.66] # static
           transform = set_carla_transform(self.start)
-        if self._try_spawn_ego_vehicle_at(transform):
+        vehicle, loc = self._try_spawn_ego_vehicle_at(transform)
+        if vehicle:
+          spawned_vehicle_positions["ego"] = loc
           break
         else:
           ego_spawn_times += 1
@@ -211,7 +218,8 @@ class CarlaBEVEnv(gym.Env):
         count -= 1
 
     # Get actor locations
-    self._vehicles_history.append(self._get_vehicle_transforms())
+    self._world.tick()
+    self._vehicles_history.append(spawned_vehicle_positions)
 
     # Add collision sensor
     self.collision_sensor = self._world.spawn_actor(self.collision_bp, carla.Transform(), attach_to=self.ego)
@@ -229,14 +237,10 @@ class CarlaBEVEnv(gym.Env):
     self.reset_step+=1
 
     # Enable sync mode
-    self.settings.synchronous_mode = True
-    self._world.apply_settings(self.settings)
+    self._set_synchronous_mode(True)
 
     self.routeplanner = RoutePlanner(self.ego, self.max_waypt)
     self.waypoints, _, self.vehicle_front = self.routeplanner.run_step()
-
-    # Set ego information for render
-    # self.birdeye_render.set_hero(self.ego, self.ego.id)
 
     return self._get_obs()
   
@@ -351,29 +355,28 @@ class CarlaBEVEnv(gym.Env):
     """
     blueprint = self._create_vehicle_bluepprint('vehicle.audi.a2', number_of_wheels=number_of_wheels) #vehicle.*
     blueprint.set_attribute('role_name', 'autopilot')
-    vehicle = self._try_spawn_actor_robust(blueprint, transform)
+    vehicle, location = self._try_spawn_actor_robust(blueprint, transform)
     if vehicle:
       vehicle.set_autopilot(True, tm_port=self._tm_port)
-      return vehicle
-    return False
+      return vehicle, location
+    return False, None
   
   def _try_spawn_actor_robust(self, blueprint, transform):
     vehicle = self._world.try_spawn_actor(blueprint, transform)
     if vehicle:
-      return vehicle
+      return vehicle, [transform.location.x, transform.location.y, transform.location.z, 0.0, transform.rotation.yaw, 0.0]
     spawn_point = carla.Transform(carla.Location(transform.location.x, transform.location.y, 0.2753), transform.rotation)
     vehicle = self._world.try_spawn_actor(blueprint, spawn_point)
     if vehicle:
-      return vehicle
-    spawn_point = carla.Transform(carla.Location(transform.location.x, transform.location.y, 0.35), transform.rotation)
-    vehicle = self._world.try_spawn_actor(blueprint, spawn_point)
-    if vehicle:
-      return vehicle
-    # log.warning(f"Retry spawning with z +0.05")
+      return vehicle, [transform.location.x, transform.location.y, 0.2753, 0.0, transform.rotation.yaw, 0.0]
     spawn_point = carla.Transform(carla.Location(transform.location.x, transform.location.y, max(transform.location.z + 0.05, 0.1)), transform.rotation)
     vehicle = self._world.try_spawn_actor(blueprint, spawn_point)
     if vehicle:
-      return vehicle
+      return vehicle, [transform.location.x, transform.location.y, max(transform.location.z + 0.05, 0.1), 0.0, transform.rotation.yaw, 0.0]
+    spawn_point = carla.Transform(carla.Location(transform.location.x, transform.location.y, 0.35), transform.rotation)
+    vehicle = self._world.try_spawn_actor(blueprint, spawn_point)
+    if vehicle:
+      return vehicle, [transform.location.x, transform.location.y, 0.35, 0.0, transform.rotation.yaw, 0.0]
 
   def _try_spawn_random_walker_at(self, transform):
     """Try to spawn a walker at specific transform with random bluprint.
@@ -423,19 +426,25 @@ class CarlaBEVEnv(gym.Env):
     #     break
 
     if not overlap:
-      vehicle = self._try_spawn_actor_robust(self.ego_bp, transform)
+      vehicle, location = self._try_spawn_actor_robust(self.ego_bp, transform)
 
     if vehicle is not None:
       self.ego = vehicle
-      return True
+      return True, location
       
-    return False
+    return False, None
   
   def _get_vehicle_transforms(self):
     veh_transforms = {}
+    new_vehicles = []
     for veh in self._vehicles:
-      transform = veh.get_transform()
-      veh_transforms[veh.id] = [transform.location.x, transform.location.y, transform.location.z, 0.0, transform.rotation.yaw, 0.0]
+      if veh.is_alive:
+        new_vehicles.append(veh)
+        transform = veh.get_transform()
+        veh_transforms[veh.id] = [transform.location.x, transform.location.y, transform.location.z, 0.0, transform.rotation.yaw, 0.0]
+    
+    self._vehicles = new_vehicles
+
     transform = self.ego.get_transform()
     veh_transforms["ego"] = [transform.location.x, transform.location.y, transform.location.z, 0.0, transform.rotation.yaw, 0.0]
     return veh_transforms
@@ -525,7 +534,7 @@ class CarlaBEVEnv(gym.Env):
       return True
 
     # If reach maximum timestep
-    if self.time_step>self.max_time_episode:
+    if self.time_step>=self.max_time_episode:
       return True
 
     # If at destination
@@ -543,6 +552,7 @@ class CarlaBEVEnv(gym.Env):
 
   def _clear_all_actors(self, actor_filters):
     """Clear specific actors."""
+    log.info("Cleaning actors...")
     for actor_filter in actor_filters:
       for actor in self._world.get_actors().filter(actor_filter):
         if actor.is_alive:
@@ -564,3 +574,4 @@ class CarlaBEVEnv(gym.Env):
   def clean(self):
     self._clear_all_actors(['sensor.other.collision', 'vehicle.*', 'controller.ai.walker', 'walker.*']) 
     self._world.tick()
+    self._set_synchronous_mode(False)
