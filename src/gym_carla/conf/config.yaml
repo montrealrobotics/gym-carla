@@ -30,3 +30,5 @@ num_iterations: 0
 num_gpus: 2
 save_last_n: 2
 save_video: true
+p: 0.7
+min_collision_scenes: 10

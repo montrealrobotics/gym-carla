@@ -1,15 +1,12 @@
 import os
 import random
 import time
-from dataclasses import dataclass
 
 import gym
 import numpy as np
-import cv2
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import tyro
 from torch.utils.tensorboard import SummaryWriter
 
 from gym_carla.agents.birdview.birdview_wrapper import BirdviewWrapper
@@ -21,75 +18,6 @@ import hydra
 import logging
 
 log = logging.getLogger(__name__)
-
-# @dataclass
-# class Args:
-#     exp_name: str = os.path.basename(__file__)[: -len(".py")]
-#     """the name of this experiment"""
-#     seed: int = 1
-#     """seed of the experiment"""
-#     torch_deterministic: bool = True
-#     """if toggled, `torch.backends.cudnn.deterministic=False`"""
-#     cuda: bool = True
-#     """if toggled, cuda will be enabled by default"""
-#     # track: bool = False
-#     # """if toggled, this experiment will be tracked with Weights and Biases"""
-#     # wandb_project_name: str = "cleanRL"
-#     # """the wandb's project name"""
-#     # wandb_entity: str = None
-#     # """the entity (team) of wandb's project"""
-#     # capture_video: bool = False
-#     # """whether to capture videos of the agent performances (check out `videos` folder)"""
-#     save_model: bool = False
-#     """whether to save model into the `runs/{run_name}` folder"""
-#     # upload_model: bool = False
-#     # """whether to upload the saved model to huggingface"""
-#     # hf_entity: str = ""
-#     # """the user or org name of the model repository from the Hugging Face Hub"""
-
-#     # Algorithm specific arguments
-#     env_id: str = "HalfCheetah-v4"
-#     """the id of the environment"""
-#     total_timesteps: int = 5000 #512 #1000000
-#     """total timesteps of the experiments"""
-#     learning_rate: float = 3e-5#3e-4
-#     """the learning rate of the optimizer"""
-#     num_envs: int = 1
-#     """the number of parallel game environments"""
-#     num_steps: int = 256 # 2048
-#     """the number of steps to run in each environment per policy rollout"""
-#     anneal_lr: bool = True
-#     """Toggle learning rate annealing for policy and value networks"""
-#     gamma: float = 0.99
-#     """the discount factor gamma"""
-#     gae_lambda: float = 0.95
-#     """the lambda for the general advantage estimation"""
-#     num_minibatches: int = 32
-#     """the number of mini-batches"""
-#     update_epochs: int = 10
-#     """the K epochs to update the policy"""
-#     norm_adv: bool = True
-#     """Toggles advantages normalization"""
-#     clip_coef: float = 0.2
-#     """the surrogate clipping coefficient"""
-#     clip_vloss: bool = True
-#     """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
-#     ent_coef: float = 0.0
-#     """coefficient of the entropy"""
-#     vf_coef: float = 0.5
-#     """coefficient of the value function"""
-#     max_grad_norm: float = 0.5
-#     """the maximum norm for the gradient clipping"""
-#     target_kl: float = None
-#     """the target KL divergence threshold"""
-
-#     # to be filled in runtime
-#     batch_size: int = 0
-#     """the batch size (computed in runtime)"""
-#     minibatch_size: int = 0
-#     """the mini-batch size (computed in runtime)"""
-#     num_iterations: int = 0
-#     """the number of iterations (computed in runtime)"""
 
 
 def make_env(
@@ -230,8 +158,8 @@ def run_single_experiment(cfg, seed, save_path, port):
             dones[step] = next_done
             if next_done:
                 # Do this with probability p
-                if len(collision_scenarios) > 10 and random.random() < cfg.p:
-                    log.info(f"Collision scenarios: {len(collision_scenarios)}")
+                if len(collision_scenarios) > cfg.min_collision_scenes and random.random() < cfg.p:
+                    log.info(f"Reset to collision scenario. Step: {global_step}")
                     next_obs = env.reset(vehicle_positions=random.choice(collision_scenarios))
                     collision_scenario = True
                     collision_scenario_idx.append(step)
@@ -249,7 +177,7 @@ def run_single_experiment(cfg, seed, save_path, port):
             rewards[step] = torch.Tensor(reward).to(device).view(-1)
             next_done = torch.Tensor(next_done).to(device)
 
-            print("Step:", step)
+            # print("Step:", step)
             if "final_info" in infos:
                 print(">>> if final_info in infos")
                 for info in infos["final_info"]:
@@ -274,7 +202,7 @@ def run_single_experiment(cfg, seed, save_path, port):
                             "charts/episodic_length", ep_len, global_step
                         )
                         if info["collision"] and not collision_scenario:
-                            log.info("Adding new collision scenario")
+                            log.info(f"Collision scenarios: {len(collision_scenarios)}. Step: {global_step}")
                             collision_scenarios.append(info["vehicle_history"])
 
         # env.clean()

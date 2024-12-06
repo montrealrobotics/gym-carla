@@ -118,6 +118,8 @@ class CarlaBEVEnv(gym.Env):
     # Disable rendering if not using camera
     self.settings.no_rendering_mode = True
 
+    self._world.apply_settings(self.settings)
+
     # Record the time of total steps and resetting steps
     self.reset_step = 0
     self.total_step = 0
@@ -203,6 +205,9 @@ class CarlaBEVEnv(gym.Env):
         else:
           ego_spawn_times += 1
           time.sleep(0.1)
+    
+    for veh in self._vehicles:
+      veh.set_autopilot(True, tm_port=self._tm_port)
 
     # Spawn pedestrians
     random.shuffle(self._walker_spawn_points)
@@ -343,6 +348,7 @@ class CarlaBEVEnv(gym.Env):
     """
     self.settings.synchronous_mode = synchronous
     self._world.apply_settings(self.settings)
+    self._tm.set_synchronous_mode(synchronous)
 
   def _try_spawn_random_vehicle_at(self, transform, number_of_wheels=[4]):
     """Try to spawn a surrounding vehicle at specific transform with random bluprint.
@@ -357,7 +363,6 @@ class CarlaBEVEnv(gym.Env):
     blueprint.set_attribute('role_name', 'autopilot')
     vehicle, location = self._try_spawn_actor_robust(blueprint, transform)
     if vehicle:
-      vehicle.set_autopilot(True, tm_port=self._tm_port)
       return vehicle, location
     return False, None
   
@@ -377,6 +382,7 @@ class CarlaBEVEnv(gym.Env):
     vehicle = self._world.try_spawn_actor(blueprint, spawn_point)
     if vehicle:
       return vehicle, [transform.location.x, transform.location.y, 0.35, 0.0, transform.rotation.yaw, 0.0]
+    return None, None
 
   def _try_spawn_random_walker_at(self, transform):
     """Try to spawn a walker at specific transform with random bluprint.
@@ -534,7 +540,7 @@ class CarlaBEVEnv(gym.Env):
       return True
 
     # If reach maximum timestep
-    if self.time_step>=self.max_time_episode:
+    if self.time_step>self.max_time_episode:
       return True
 
     # If at destination
@@ -552,7 +558,6 @@ class CarlaBEVEnv(gym.Env):
 
   def _clear_all_actors(self, actor_filters):
     """Clear specific actors."""
-    log.info("Cleaning actors...")
     for actor_filter in actor_filters:
       for actor in self._world.get_actors().filter(actor_filter):
         if actor.is_alive:
