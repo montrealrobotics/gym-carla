@@ -5,7 +5,7 @@ defaults:
 
 hydra:
   launcher:
-    n_jobs: 2
+    n_jobs: 1
   sweep:
     dir: results/default_experiment
     subdir: ${hydra.job.override_dirname}/seed=${seed}
@@ -16,6 +16,8 @@ hydra:
         item_sep: "/"
         exclude_keys:
           - seed
+          - gpu_ids
+
 
 seed: 1
 torch_deterministic: true
@@ -27,7 +29,7 @@ num_envs: 1
 num_steps: 256
 total_timesteps: 1024
 num_iterations: 0
-num_gpus: 2
+gpu_ids: [0]
 save_last_n: 2
 save_video: true
 num_vehicles: 25

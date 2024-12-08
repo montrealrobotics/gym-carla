@@ -411,25 +411,27 @@ def run_single_experiment(cfg, seed, save_path, port):
     
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def run_experiment(cfg: DictConfig) -> None:
-    time.sleep(3)
     print(OmegaConf.to_yaml(cfg))
-    # os.environ["SDL_VIDEODRIVER"] = "dummy"
     save_path = HydraConfig.get().runtime.output_dir
     print(">>> Storing outputs in: ", save_path)
-    # print("Experiment dir: ", cfg.hydra.sweep.dir)
     os.makedirs(save_path, exist_ok=True) # TODO: where we'll store results. we need to decide on which stats.
     
     result_file = Path(save_path).joinpath("episodic_rewards.npy")
     if not(result_file.is_file()): # if results aren't there already
-        gpu_id = HydraConfig.get().job.num % cfg.num_gpus
+        
+        num_gpus = len(cfg.gpu_ids)
+        gpu_id_idx = HydraConfig.get().job.num % num_gpus
+        gpu_id = cfg.gpu_ids[gpu_id_idx]
         print("gpu id:", gpu_id)
         print("---------------")
         port = (gpu_id + 4)*1000
+        print("port:", port)
         
         os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
         os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
         run_single_experiment(cfg, cfg.seed, save_path, port)
         print("Experiment done!")
+        
     else:
         print("There are already save results for this hyperparam config. Terminating.")
 
