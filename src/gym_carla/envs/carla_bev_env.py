@@ -118,11 +118,15 @@ class CarlaBEVEnv(gym.Env):
     # Disable rendering if not using camera
     self.settings.no_rendering_mode = True
 
-    self._world.apply_settings(self.settings)
+    # Enable sync mode
+    self._set_synchronous_mode(True)
+    self._tm.set_synchronous_mode(True)
 
     # Record the time of total steps and resetting steps
     self.reset_step = 0
     self.total_step = 0
+
+    self.collision_sensor = None
     
     # Initialize the renderer
     self._init_renderer()
@@ -143,7 +147,7 @@ class CarlaBEVEnv(gym.Env):
     # Spawn surrounding vehicles and ego
     spawned_vehicle_positions = {}
     if vehicle_positions:
-      for time_step in reversed(vehicle_positions):
+      for time_step in vehicle_positions: # reversed
         for key, pos in time_step.items():
           if key != "ego":
             spawn_point = carla.Transform(carla.Location(*pos[:3]), carla.Rotation(*pos[3:]))
@@ -152,11 +156,18 @@ class CarlaBEVEnv(gym.Env):
               self._vehicles.append(vehicle)
               spawned_vehicle_positions[vehicle.id] = loc
             else:
-              log.error(f"Could not spawn vehicle at {pos}")
+              log.debug(f"Could not spawn vehicle at {pos}")
 
         pos = time_step["ego"]
         spawn_point = carla.Transform(carla.Location(*pos[:3]), carla.Rotation(*pos[3:]))
-        vehicle, loc = self._try_spawn_ego_vehicle_at(spawn_point)
+        for i in range(5):
+          if i < 4:
+            vehicle, loc = self._try_spawn_ego_vehicle_at(self._augment_transform(spawn_point))
+          else:
+            vehicle, loc = self._try_spawn_ego_vehicle_at(spawn_point)
+          if vehicle:
+            break
+
         if vehicle:
           log.info("Collision scenario!")
           spawned_vehicle_positions["ego"] = loc
@@ -223,7 +234,7 @@ class CarlaBEVEnv(gym.Env):
         count -= 1
 
     # Get actor locations
-    self._world.tick()
+    # self._world.tick()
     self._vehicles_history.append(spawned_vehicle_positions)
 
     # Add collision sensor
@@ -305,6 +316,11 @@ class CarlaBEVEnv(gym.Env):
   def render(self, mode):
     pass
 
+  def _augment_transform(self, transform):
+    # Augment the yaw heading
+    yaw_delta = (random.random()*2-1)*20
+    return carla.Transform(transform.location, carla.Rotation(0.0, transform.rotation.yaw + yaw_delta, 0.0))
+
   def _create_vehicle_bluepprint(self, actor_filter, color=None, number_of_wheels=[4]):
     """Create the blueprint for a specific actor type.
 
@@ -348,7 +364,6 @@ class CarlaBEVEnv(gym.Env):
     """
     self.settings.synchronous_mode = synchronous
     self._world.apply_settings(self.settings)
-    self._tm.set_synchronous_mode(synchronous)
 
   def _try_spawn_random_vehicle_at(self, transform, number_of_wheels=[4]):
     """Try to spawn a surrounding vehicle at specific transform with random bluprint.
@@ -563,6 +578,8 @@ class CarlaBEVEnv(gym.Env):
         if actor.is_alive:
           if actor.type_id == 'controller.ai.walker':
             actor.stop()
+          # if actor.type_id == 'sensor.other.collision':
+          #   actor.stop()
           actor.destroy()
     
   def __exit__(self, exception_type, exception_value, traceback):
@@ -572,6 +589,7 @@ class CarlaBEVEnv(gym.Env):
     self._clear_all_actors(['sensor.other.collision', 'vehicle.*', 'controller.ai.walker', 'walker.*']) 
     self._world.tick()
     self._set_synchronous_mode(False)
+    self._tm.set_synchronous_mode(False)
     self._client = None
     self._world = None
     self._tm = None
@@ -579,4 +597,3 @@ class CarlaBEVEnv(gym.Env):
   def clean(self):
     self._clear_all_actors(['sensor.other.collision', 'vehicle.*', 'controller.ai.walker', 'walker.*']) 
     self._world.tick()
-    self._set_synchronous_mode(False)

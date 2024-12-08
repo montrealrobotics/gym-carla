@@ -25,7 +25,7 @@ def make_env(
     number_of_vehicles=50,
     number_of_walkers=0,
     display_size=256,
-    max_past_step=3,
+    max_past_step=2,
     delta_past_step=5,
     dt=0.1,
     discrete=False,
@@ -90,7 +90,7 @@ def run_single_experiment(cfg, seed, save_path, port):
     cfg.agent.minibatch_size = int(cfg.agent.batch_size // cfg.agent.num_minibatches)
     print("batch size: ", cfg.agent.batch_size)
     print("Minibatch size set as :", cfg.agent.minibatch_size)
-    cfg.num_iterations = cfg.total_timesteps // cfg.agent.batch_size
+    num_iterations = cfg.total_timesteps // cfg.agent.batch_size
     run_name = f"{cfg.env_id}__{exp_name}__{cfg.seed}__{int(time.time())}"
 
     writer = SummaryWriter(f"runs/{run_name}")
@@ -115,6 +115,8 @@ def run_single_experiment(cfg, seed, save_path, port):
     for k, s in env.observation_space.spaces.items():
         obs[k] = torch.zeros((cfg.num_steps, env.num_envs,) + s.shape).to(device)
     actions = torch.zeros((cfg.num_steps, cfg.num_envs) + env.action_space.shape).to(device)
+    mus = torch.zeros((cfg.num_steps, cfg.num_envs) + env.action_space.shape).to(device)
+    sigmas = torch.zeros((cfg.num_steps, cfg.num_envs) + env.action_space.shape).to(device)
     logprobs = torch.zeros((cfg.num_steps, cfg.num_envs)).to(device)
     rewards = torch.zeros((cfg.num_steps, cfg.num_envs)).to(device)
     dones = torch.zeros((cfg.num_steps, cfg.num_envs)).to(device)
@@ -135,13 +137,13 @@ def run_single_experiment(cfg, seed, save_path, port):
     t_train_values = 0.0
 
     collision_scenarios = []
-    for iteration in range(1, cfg.num_iterations + 1):
+    for iteration in range(1, num_iterations + 1):
         next_obs = env.reset()
         next_done = torch.zeros(env.num_envs).to(device)
         print("Iteration:", iteration)
         # Annealing the rate if instructed to do so.
         if cfg.agent.anneal_lr:
-            frac = 1.0 - (iteration - 1.0) / cfg.num_iterations
+            frac = 1.0 - (iteration - 1.0) / num_iterations
             lrnow = frac * cfg.agent.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
 
@@ -171,6 +173,8 @@ def run_single_experiment(cfg, seed, save_path, port):
                 action, value, log_prob, mu, sigma, _ = agent.forward(next_obs)
                 values[step] = value.flatten()
             actions[step] = action
+            mus[step] = mu
+            sigmas[step] = sigma
             logprobs[step] = log_prob
 
             next_obs, reward, next_done, infos = env.step(action.cpu().numpy())
@@ -205,7 +209,7 @@ def run_single_experiment(cfg, seed, save_path, port):
                             log.info(f"Collision scenarios: {len(collision_scenarios)}. Step: {global_step}")
                             collision_scenarios.append(info["vehicle_history"])
 
-        # env.clean()
+        env.clean()
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -239,6 +243,8 @@ def run_single_experiment(cfg, seed, save_path, port):
             b_obs[k] = obs[k].reshape((-1,) + obs[k].shape[2:])
         b_logprobs = logprobs.reshape(-1)
         b_actions = actions.reshape((-1,) + env.action_space.shape)
+        b_mus = mus.reshape((-1,) + env.action_space.shape)
+        b_sigmas = sigmas.reshape((-1,) + env.action_space.shape)
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
         b_values = values.reshape(-1)
@@ -254,16 +260,23 @@ def run_single_experiment(cfg, seed, save_path, port):
                 end = start + cfg.agent.minibatch_size
                 mb_inds = b_inds[start:end]
 
-                newvalue, newlogprob, entropy_loss, _ = agent.evaluate_actions(
+                newvalue, newlogprob, entropy_loss, distribution = agent.evaluate_actions(
                     {k: b_obs[k][mb_inds] for k in b_obs.keys()}, b_actions[mb_inds]
                 )
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
+                # with torch.no_grad():
+                #     # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                #     old_approx_kl = (-logratio).mean()
+                #     approx_kl = ((ratio - 1) - logratio).mean()
+                #     clipfracs += [((ratio - 1.0).abs() > cfg.agent.clip_coef).float().mean().item()]
+                
                 with torch.no_grad():
-                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                    old_distribution = agent.action_dist.proba_distribution(
+                        b_mus[mb_inds], b_sigmas[mb_inds])
                     old_approx_kl = (-logratio).mean()
-                    approx_kl = ((ratio - 1) - logratio).mean()
+                    approx_kl = torch.distributions.kl_divergence(old_distribution.distribution, distribution).mean()
                     clipfracs += [((ratio - 1.0).abs() > cfg.agent.clip_coef).float().mean().item()]
                 
                 mb_advantages = b_advantages[mb_inds]
@@ -290,7 +303,7 @@ def run_single_experiment(cfg, seed, save_path, port):
                 else:
                     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
-                loss = pg_loss - cfg.agent.ent_coef * entropy_loss + v_loss * cfg.agent.vf_coef
+                loss = pg_loss + cfg.agent.ent_coef * entropy_loss + v_loss * cfg.agent.vf_coef
 
                 optimizer.zero_grad()
                 loss.backward()

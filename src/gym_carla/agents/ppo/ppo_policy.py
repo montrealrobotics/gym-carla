@@ -109,8 +109,8 @@ class PpoPolicy(nn.Module):
             sigma = self.dist_sigma(latent_pi)
         return (
             self.action_dist.proba_distribution(mu, sigma),
-            mu.detach().cpu().numpy(),
-            sigma.detach().cpu().numpy(),
+            mu.detach(),#.cpu().numpy(),
+            sigma.detach(),#.cpu().numpy(),
         )
 
     def evaluate_actions(

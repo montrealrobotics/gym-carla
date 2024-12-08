@@ -26,9 +26,8 @@ env_id: "carla-bev-v0"
 num_envs: 1
 num_steps: 1024
 total_timesteps: 1048576 #65536
-num_iterations: 0
 num_gpus: 2
 save_last_n: 2
 save_video: true
-p: 0.7
-min_collision_scenes: 10
+p: 0.5
+min_collision_scenes: 20
