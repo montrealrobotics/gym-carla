@@ -94,7 +94,7 @@ def make_env(
     env_name="carla-bev-v0",
     number_of_vehicles=25,
     number_of_walkers=0,
-    display_size=256,
+    display_size=128, #256
     max_past_step=1,
     dt=0.1,
     discrete=False,
@@ -178,7 +178,7 @@ def run_single_experiment(cfg, seed, save_path, port):
 
     # TODO: eventually we want many envs!!
     # enforcing that max steps are more than num steps here
-    env = CarlaDummVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town, port=port, seed=seed, max_time_episode=max_steps, number_of_vehicles=num_vehicles) for env_name, env_town, port, max_steps, num_vehicles  in [(cfg.env_id, cfg.town, port, cfg.num_steps+1, cfg.num_vehicles)]])
+    env = CarlaDummVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town, port=port, seed=seed, max_time_episode=max_steps, number_of_vehicles=num_vehicles) for env_name, env_town, port, max_steps, num_vehicles  in [(cfg.env_id, cfg.town, port, cfg.num_steps-1, cfg.num_vehicles)]])
     # env = DummyVecEnv([make_env(env_name=cfg.env_id, town=cfg.town)])
     
     agent = PpoPolicy(env.observation_space, env.action_space, distribution_kwargs=cfg.agent.distribution_kwargs).to(device)
@@ -212,8 +212,9 @@ def run_single_experiment(cfg, seed, save_path, port):
 
     episodic_rewards_list = []
     episodic_lens_list = []
+    next_obs = env.reset()
     for iteration in range(1, cfg.num_iterations + 1):
-        next_obs = env.reset()
+        
         next_done = torch.zeros(env.num_envs).to(device)
         print("Iteration:", iteration)
         # Annealing the rate if instructed to do so.
@@ -254,7 +255,7 @@ def run_single_experiment(cfg, seed, save_path, port):
                             ep_start_idx.append(step)
                         
                         episodic_rewards_list.append(ret)
-                        episodic_lens_list.append(ep_lens)
+                        episodic_lens_list.append(ep_len)
                         print(
                             f"global_step={global_step}, episodic_return={ret}"
                         )
@@ -264,6 +265,10 @@ def run_single_experiment(cfg, seed, save_path, port):
                         writer.add_scalar(
                             "charts/episodic_length", ep_len, global_step
                         )
+                        writer.add_scalar(
+                            "charts/average_reward_in_episode", ret/ep_len, global_step
+                        )
+
         env.clean()
 
         # bootstrap value if not done
@@ -286,18 +291,19 @@ def run_single_experiment(cfg, seed, save_path, port):
                 )
             returns = advantages + values
         
-        if cfg.save_video:
-            start_ep = max(len(ep_start_idx)-cfg.save_last_n, 0)
-            for i, start_step in enumerate(ep_start_idx[start_ep:]):
-                ep = i+start_ep
-                images = [obs['birdeye'][start_step+j, 0].cpu().numpy().astype(np.uint8) for j in range(ep_lens[ep])]
-                width, height = images[0].shape[:2]
-                out = cv2.VideoWriter(f"{save_path}/ep_{ep}.mp4", cv2.VideoWriter_fourcc(*'mp4v'), 10, (width, height))
-                for img in images:
-                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    out.write(img)
-                print(f"Saving video to {save_path}/ep_{ep}.mp4")
-                out.release()
+        #TODO : double check 
+        # if cfg.save_video:
+        #     start_ep = max(len(ep_start_idx)-cfg.save_last_n, 0)
+        #     for i, start_step in enumerate(ep_start_idx[start_ep:]):
+        #         ep = i+start_ep
+        #         images = [obs['birdeye'][start_step+j, 0].cpu().numpy().astype(np.uint8) for j in range(ep_lens[ep])]
+        #         width, height = images[0].shape[:2]
+        #         out = cv2.VideoWriter(f"{save_path}/ep_{ep}.mp4", cv2.VideoWriter_fourcc(*'mp4v'), 10, (width, height))
+        #         for img in images:
+        #             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        #             out.write(img)
+        #         print(f"Saving video to {save_path}/ep_{ep}.mp4")
+        #         out.release()
 
         # flatten the batch
         b_obs = {}
