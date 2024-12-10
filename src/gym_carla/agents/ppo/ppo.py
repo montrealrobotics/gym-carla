@@ -18,7 +18,8 @@ from gym_carla.agents.ppo.ppo_policy import PpoPolicy
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 import hydra
-
+from pathlib import Path
+import time
 # @dataclass
 # class Args:
 #     exp_name: str = os.path.basename(__file__)[: -len(".py")]
@@ -93,7 +94,7 @@ def make_env(
     env_name="carla-bev-v0",
     number_of_vehicles=25,
     number_of_walkers=0,
-    display_size=256,
+    display_size=128, #256
     max_past_step=1,
     dt=0.1,
     discrete=False,
@@ -177,7 +178,7 @@ def run_single_experiment(cfg, seed, save_path, port):
 
     # TODO: eventually we want many envs!!
     # enforcing that max steps are more than num steps here
-    env = CarlaDummVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town, port=port, seed=seed, max_time_episode=max_steps, number_of_vehicles=num_vehicles) for env_name, env_town, port, max_steps, num_vehicles  in [(cfg.env_id, cfg.town, port, cfg.num_steps+1, cfg.num_vehicles)]])
+    env = CarlaDummVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town, port=port, seed=seed, max_time_episode=max_steps, number_of_vehicles=num_vehicles) for env_name, env_town, port, max_steps, num_vehicles  in [(cfg.env_id, cfg.town, port, cfg.num_steps-1, cfg.num_vehicles)]])
     # env = DummyVecEnv([make_env(env_name=cfg.env_id, town=cfg.town)])
     
     agent = PpoPolicy(env.observation_space, env.action_space, distribution_kwargs=cfg.agent.distribution_kwargs).to(device)
@@ -209,8 +210,11 @@ def run_single_experiment(cfg, seed, save_path, port):
     kl_early_stop = 0
     t_train_values = 0.0
 
+    episodic_rewards_list = []
+    episodic_lens_list = []
+    next_obs = env.reset()
     for iteration in range(1, cfg.num_iterations + 1):
-        next_obs = env.reset()
+        
         next_done = torch.zeros(env.num_envs).to(device)
         print("Iteration:", iteration)
         # Annealing the rate if instructed to do so.
@@ -238,11 +242,9 @@ def run_single_experiment(cfg, seed, save_path, port):
             rewards[step] = torch.Tensor(reward).to(device).view(-1)
             next_done = torch.Tensor(next_done).to(device)
 
-            print("Step:", step)
-            if "final_info" in infos:
-                print(">>> if final_info in infos")
-                for info in infos["final_info"]:
-                    print("for info in infos[\"final_info\"]")
+            print("Step:", step, "  Iteration:", iteration)
+            
+            
             for info in infos:
                 if(next_done or step == (cfg.num_steps-1)):
                     if "episode" in info["final_info"]:
@@ -251,6 +253,9 @@ def run_single_experiment(cfg, seed, save_path, port):
                         ep_lens.append(int(ep_len))
                         if step < cfg.num_steps-1:
                             ep_start_idx.append(step)
+                        
+                        episodic_rewards_list.append(ret)
+                        episodic_lens_list.append(ep_len)
                         print(
                             f"global_step={global_step}, episodic_return={ret}"
                         )
@@ -260,6 +265,10 @@ def run_single_experiment(cfg, seed, save_path, port):
                         writer.add_scalar(
                             "charts/episodic_length", ep_len, global_step
                         )
+                        writer.add_scalar(
+                            "charts/average_reward_in_episode", ret/ep_len, global_step
+                        )
+
         env.clean()
 
         # bootstrap value if not done
@@ -282,18 +291,19 @@ def run_single_experiment(cfg, seed, save_path, port):
                 )
             returns = advantages + values
         
-        if cfg.save_video:
-            start_ep = max(len(ep_start_idx)-cfg.save_last_n, 0)
-            for i, start_step in enumerate(ep_start_idx[start_ep:]):
-                ep = i+start_ep
-                images = [obs['birdeye'][start_step+j, 0].cpu().numpy().astype(np.uint8) for j in range(ep_lens[ep])]
-                width, height = images[0].shape[:2]
-                out = cv2.VideoWriter(f"{save_path}/ep_{ep}.mp4", cv2.VideoWriter_fourcc(*'mp4v'), 10, (width, height))
-                for img in images:
-                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    out.write(img)
-                print(f"Saving video to {save_path}/ep_{ep}.mp4")
-                out.release()
+        #TODO : double check 
+        # if cfg.save_video:
+        #     start_ep = max(len(ep_start_idx)-cfg.save_last_n, 0)
+        #     for i, start_step in enumerate(ep_start_idx[start_ep:]):
+        #         ep = i+start_ep
+        #         images = [obs['birdeye'][start_step+j, 0].cpu().numpy().astype(np.uint8) for j in range(ep_lens[ep])]
+        #         width, height = images[0].shape[:2]
+        #         out = cv2.VideoWriter(f"{save_path}/ep_{ep}.mp4", cv2.VideoWriter_fourcc(*'mp4v'), 10, (width, height))
+        #         for img in images:
+        #             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        #             out.write(img)
+        #         print(f"Saving video to {save_path}/ep_{ep}.mp4")
+        #         out.release()
 
         # flatten the batch
         b_obs = {}
@@ -380,9 +390,13 @@ def run_single_experiment(cfg, seed, save_path, port):
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
     if cfg.save_model:
-        model_path = f"runs/{run_name}/{exp_name}.cleanrl_model"
+        model_path = f"{save_path}/policy.cleanrl_model"
         torch.save(agent.state_dict(), model_path)
         print(f"model saved to {model_path}")
+        
+        np.save(f"{save_path}/episodic_rewards.npy", np.array(episodic_rewards_list))
+        np.save(f"{save_path}/episodic_lens.npy", np.array(episodic_lens_list))
+        
         # from cleanrl_utils.evals.ppo_eval import evaluate
 
         # episodic_returns = evaluate(
@@ -404,19 +418,28 @@ def run_single_experiment(cfg, seed, save_path, port):
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def run_experiment(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
-    # os.environ["SDL_VIDEODRIVER"] = "dummy"
     save_path = HydraConfig.get().runtime.output_dir
     print(">>> Storing outputs in: ", save_path)
-    os.makedirs("./results", exist_ok=True) # TODO: where we'll store results. we need to decide on which stats.
+    os.makedirs(save_path, exist_ok=True) # TODO: where we'll store results. we need to decide on which stats.
     
-    gpu_id = HydraConfig.get().job.num % cfg.num_gpus
-    print("gpu id:", gpu_id)
-    print("---------------")
-    port = (gpu_id + 4)*1000
-    
-    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    run_single_experiment(cfg, cfg.seed, save_path, port)
+    result_file = Path(save_path).joinpath("episodic_rewards.npy")
+    if not(result_file.is_file()): # if results aren't there already
+        
+        num_gpus = len(cfg.gpu_ids)
+        gpu_id_idx = HydraConfig.get().job.num % num_gpus
+        gpu_id = cfg.gpu_ids[gpu_id_idx]
+        print("gpu id:", gpu_id)
+        print("---------------")
+        port = (gpu_id + 4)*1000
+        print("port:", port)
+        
+        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+        run_single_experiment(cfg, cfg.seed, save_path, port)
+        print("Experiment done!")
+        
+    else:
+        print("There are already save results for this hyperparam config. Terminating.")
 
 if __name__ == "__main__":
     run_experiment()
