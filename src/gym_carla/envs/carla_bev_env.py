@@ -552,21 +552,25 @@ class CarlaBEVEnv(gym.Env):
 
     # If collides
     if len(self.collision_hist)>0: 
+      print("Detected a collision! Terminating.")
       return True
 
     # If reach maximum timestep
     if self.time_step>self.max_time_episode:
+      print("Reached max timesteps! Terminating.")
       return True
 
     # If at destination
     if self.dests is not None: # If at destination
       for dest in self.dests:
         if np.sqrt((ego_x-dest[0])**2+(ego_y-dest[1])**2)<4:
+          print("Reached the destination! Terminating.")
           return True
 
     # If out of lane
     dis, _ = get_lane_dis(self.waypoints, ego_x, ego_y)
     if abs(dis) > self.out_lane_thres:
+      print("Out of lane detected! Terminating.")
       return True
 
     return False
@@ -597,3 +601,4 @@ class CarlaBEVEnv(gym.Env):
   def clean(self):
     self._clear_all_actors(['sensor.other.collision', 'vehicle.*', 'controller.ai.walker', 'walker.*']) 
     self._world.tick()
+    self._set_synchronous_mode(False)
