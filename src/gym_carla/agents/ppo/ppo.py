@@ -386,10 +386,6 @@ def run_experiment(cfg: DictConfig) -> None:
     os.makedirs(save_path, exist_ok=True) # TODO: where we'll store results. we need to decide on which stats.
     os.makedirs(save_path + "/collision", exist_ok=True)
     
-    gpu_id = HydraConfig.get().job.num % cfg.num_gpus
-    print("gpu id:", gpu_id)
-    print("---------------")
-    port = (gpu_id + 4)*1000
     
     result_file = Path(save_path).joinpath("episodic_rewards.npy")
     if not(result_file.is_file()): # if results aren't there already
