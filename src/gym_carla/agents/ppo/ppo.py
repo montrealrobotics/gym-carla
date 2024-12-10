@@ -174,7 +174,6 @@ def run_single_experiment(cfg, seed, save_path, port):
                     collision_scenario_idx.append(step)
                 else:
                     collision_scenario = False
-                    next_obs = env.reset()
 
             with torch.no_grad():
                 action, value, log_prob, mu, sigma, _ = agent.forward(next_obs)
