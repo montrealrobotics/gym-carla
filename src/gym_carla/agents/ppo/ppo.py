@@ -10,7 +10,6 @@ import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 
 from gym_carla.agents.birdview.birdview_wrapper import BirdviewWrapper
-from gym_carla.envs.misc import CarlaDummVecEnv
 from gym_carla.agents.ppo.ppo_policy import PpoPolicy
 from gym_carla.envs.misc import CarlaDummVecEnv, save_video
 from hydra.core.hydra_config import HydraConfig
@@ -87,6 +86,21 @@ def make_env(
     return env
 
 
+def save_model(policy, optimizer, trainer_cfg, path):
+    policy_state_dict = policy.state_dict()
+    policy_init_kwargs = policy.get_init_kwargs()
+    torch.save(
+        {
+            'policy_state_dict': policy_state_dict,
+            'policy_init_kwargs': policy_init_kwargs,
+            'optimizer_state_dict': optimizer.state_dict(),
+            # 'scheduler_state_dict': self.scheduler.state_dict(),
+            'trainer_init_kwargs': trainer_cfg,
+        },
+        path
+    )
+
+
 def run_single_experiment(cfg, seed, save_path, port):
     exp_name = os.path.basename(__file__)[: -len(".py")]
     cfg.agent.batch_size = int(cfg.num_envs * cfg.num_steps)
@@ -104,7 +118,6 @@ def run_single_experiment(cfg, seed, save_path, port):
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() and cfg.cuda else "cpu")
-    # device = "cpu"
 
     # TODO: eventually we want many envs!!
     # enforcing that max steps are more than num steps here
@@ -341,8 +354,8 @@ def run_single_experiment(cfg, seed, save_path, port):
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
     if cfg.save_model:
-        model_path = f"{save_path}/policy.cleanrl_model"
-        torch.save(agent.state_dict(), model_path)
+        model_path = f"{save_path}/policy.ppo_model"
+        save_model(agent, optimizer, cfg, model_path)
         print(f"model saved to {model_path}")
         
         np.save(f"{save_path}/episodic_rewards.npy", np.array(episodic_rewards_list))

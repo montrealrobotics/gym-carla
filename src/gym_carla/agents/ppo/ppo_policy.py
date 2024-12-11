@@ -231,15 +231,13 @@ class PpoPolicy(nn.Module):
     @classmethod
     def load(cls, path):
         device = "cuda" if th.cuda.is_available() else "cpu"
-        # device = "cpu"
-
         saved_variables = th.load(path, map_location=device)
         # Create policy object
         model = cls(**saved_variables["policy_init_kwargs"])
         # Load weights
         model.load_state_dict(saved_variables["policy_state_dict"])
         model.to(device)
-        return model, saved_variables["train_init_kwargs"]
+        return model, saved_variables["trainer_init_kwargs"]
 
     @staticmethod
     def init_weights(module: nn.Module, gain: float = 1) -> None:
