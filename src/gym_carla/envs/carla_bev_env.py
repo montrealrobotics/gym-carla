@@ -307,7 +307,7 @@ class CarlaBEVEnv(gym.Env):
     self.time_step += 1
     self.total_step += 1
 
-    return (self._get_obs(), self._get_reward(), self._terminal(), copy.deepcopy(info))
+    return (self._get_obs(), self._get_reward(action), self._terminal(), copy.deepcopy(info))
 
   def seed(self, seed=None):
     self.np_random, seed = seeding.np_random(seed)
@@ -507,8 +507,11 @@ class CarlaBEVEnv(gym.Env):
 
     return obs
 
-  def _get_reward(self):
+  def _get_reward(self, action):
     """Calculate the step reward."""
+
+    steer = action[1]
+
     # reward for speed tracking
     v = self.ego.get_velocity()
     speed = np.sqrt(v.x**2 + v.y**2)
@@ -520,7 +523,7 @@ class CarlaBEVEnv(gym.Env):
       r_collision = -1
 
     # reward for steering:
-    r_steer = -self.ego.get_control().steer**2
+    r_steer = -steer**2
 
     # reward for out of lane
     ego_x, ego_y = get_pos(self.ego)
@@ -539,7 +542,7 @@ class CarlaBEVEnv(gym.Env):
       r_fast = -1
 
     # cost for lateral acceleration
-    r_lat = - abs(self.ego.get_control().steer) * lspeed_lon**2
+    r_lat = - abs(steer) * lspeed_lon**2
 
     r = 200*r_collision + 1*lspeed_lon + 10*r_fast + 1*r_out + r_steer*5 + 0.2*r_lat - 0.1
 
