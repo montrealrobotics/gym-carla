@@ -353,13 +353,14 @@ def run_single_experiment(cfg, seed, save_path, port):
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
+    print("Saving these returns:", np.array(episodic_rewards_list))
+    np.save(f"{save_path}/episodic_rewards.npy", np.array(episodic_rewards_list))
+    np.save(f"{save_path}/episodic_lens.npy", np.array(episodic_lens_list))
+
     if cfg.save_model:
         model_path = f"{save_path}/policy.ppo_model"
         save_model(agent, optimizer, cfg, model_path)
         print(f"model saved to {model_path}")
-        
-        np.save(f"{save_path}/episodic_rewards.npy", np.array(episodic_rewards_list))
-        np.save(f"{save_path}/episodic_lens.npy", np.array(episodic_lens_list))
         
         # from cleanrl_utils.evals.ppo_eval import evaluate
 
