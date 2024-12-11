@@ -37,7 +37,6 @@ def save_video(observations, start_idxs, ep_lengths, save_n, save_path, prefix=N
   for i, start_step in enumerate(start_idxs[start_ep:]):
     ep = i+start_ep
     file_name = f"ep_{ep}" if prefix is None else f"{prefix}_{ep}"
-    print(observations[start_step, 0].shape)
     images = [observations[start_step+j, 0].cpu().numpy().astype(np.uint8) for j in range(ep_lengths[ep])]
     width, height = images[0].shape[:2]
     out = cv2.VideoWriter(f"{save_path}/{file_name}.mp4", cv2.VideoWriter_fourcc(*'mp4v'), 10, (width, height))

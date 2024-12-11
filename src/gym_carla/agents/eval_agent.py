@@ -67,11 +67,10 @@ def main(seed, env_id, town, port, max_steps, num_episodes, num_vehicles, model_
             obs[step] = torch.Tensor(next_obs['birdeye'])
 
         for info in infos:
-            if info["collision"] or True:
+            if info["collision"]:
                 print("Collision!")
                 collision_scenarios.append(info["vehicle_history"])
                 ep_len = int(info["final_info"]["episode"]["l"])
-                print(obs.shape)
                 save_video(obs, [0], [ep_len-1], 1, save_path + "/collision", prefix=f"ep_{ep}")
         
         sum_rewards[ep] = np.sum(ep_reward)
