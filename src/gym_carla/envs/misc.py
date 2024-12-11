@@ -31,6 +31,21 @@ class CarlaDummVecEnv(DummyVecEnv):
     for env_idx in range(self.num_envs):
       self.envs[env_idx].clean()
 
+
+def save_video(observations, start_idxs, ep_lengths, save_n, save_path):
+  start_ep = max(len(start_idxs)-save_n, 0)
+  for i, start_step in enumerate(start_idxs[start_ep:]):
+    ep = i+start_ep
+    images = [observations[start_step+j, 0].cpu().numpy().astype(np.uint8) for j in range(ep_lengths[ep])]
+    width, height = images[0].shape[:2]
+    out = cv2.VideoWriter(f"{save_path}/ep_{ep}.mp4", cv2.VideoWriter_fourcc(*'mp4v'), 10, (width, height))
+    for img in images:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        out.write(img)
+    print(f"Saving video to {save_path}/ep_{ep}.mp4")
+    out.release()
+       
+
 def get_speed(vehicle):
   """
   Compute speed of a vehicle in Kmh
@@ -234,6 +249,7 @@ def set_carla_transform(pose):
   transform = carla.Transform()
   transform.location.x = pose[0]
   transform.location.y = pose[1]
+  transform.location.z = 0.275307
   transform.rotation.yaw = pose[2]
   return transform
 

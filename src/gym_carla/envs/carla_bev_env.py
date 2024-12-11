@@ -12,6 +12,7 @@ import numpy as np
 import pygame
 import random
 import time
+import logging
 
 import gym
 from gym import spaces
@@ -23,6 +24,9 @@ from gym_carla.envs.route_planner import RoutePlanner
 from gym_carla.envs.misc import *
 
 
+log = logging.getLogger(__name__)
+
+
 class CarlaBEVEnv(gym.Env):
   """An OpenAI gym wrapper for CARLA simulator."""
 
@@ -32,6 +36,7 @@ class CarlaBEVEnv(gym.Env):
     if type(self.display_size) == int:
       self.display_size = (self.display_size, self.display_size)
     self.max_past_step = params['max_past_step']
+    self.delta_past_step = params['delta_past_step']
     self.number_of_vehicles = params['number_of_vehicles']
     self.number_of_walkers = params['number_of_walkers']
     self.dt = params['dt']
@@ -46,11 +51,6 @@ class CarlaBEVEnv(gym.Env):
     self.max_ego_spawn_times = params['max_ego_spawn_times']
     self._headless = params['headless'] if 'headless' in params else False
     self._seed = params['seed']
-    if 'pixor' in params.keys():
-      self.pixor = params['pixor']
-      self.pixor_size = params['pixor_size']
-    else:
-      self.pixor = False
 
     # Destination
     if params['task_mode'] == 'roundabout':
@@ -70,44 +70,38 @@ class CarlaBEVEnv(gym.Env):
       params['continuous_steer_range'][0]]), np.array([params['continuous_accel_range'][1],
       params['continuous_steer_range'][1]]), dtype=np.float32)  # acc, steer
     observation_space_dict = {
-      # 'camera': spaces.Box(low=0, high=255, shape=(self.display_size[0], self.display_size[1], 3), dtype=np.uint8),
       'birdeye': spaces.Box(low=0, high=255, shape=(self.display_size[0], self.display_size[1], 3), dtype=np.uint8),
       'state': spaces.Box(np.array([-2, -1, -5, 0]), np.array([2, 1, 30, 1]), dtype=np.float32)
       }
-    if self.pixor:
-      observation_space_dict.update({
-        'roadmap': spaces.Box(low=0, high=255, shape=(self.display_size[0], self.display_size[1], 3), dtype=np.uint8),
-        'vh_clas': spaces.Box(low=0, high=1, shape=(self.pixor_size, self.pixor_size, 1), dtype=np.float32),
-        'vh_regr': spaces.Box(low=-5, high=5, shape=(self.pixor_size, self.pixor_size, 6), dtype=np.float32),
-        'pixor_state': spaces.Box(np.array([-1000, -1000, -1, -1, -5]), np.array([1000, 1000, 1, 1, 20]), dtype=np.float32)
-        })
     self.observation_space = spaces.Dict(observation_space_dict)
 
     # Connect to carla server and get world object
     print('connecting to Carla server...')
-    self.client = carla.Client('localhost', self._port)
-    self.client.set_timeout(10.0)
-    self._tm = self.client.get_trafficmanager(self._port+1500)
+    self._client = carla.Client('localhost', self._port)
+    self._client.set_timeout(10.0)
+    self._tm = self._client.get_trafficmanager(self._port+1500)
     self._tm_port = self._port+1500
     if self._seed:
       self._tm.set_random_device_seed(self._seed)
       random.seed(self._seed)
       np.random.seed(self._seed)
-    self._world = self.client.load_world(params['town'])
+    self._world = self._client.load_world(params['town'])
     print('Carla server connected!')
 
     # Set weather
     self._world.set_weather(carla.WeatherParameters.ClearNoon)
 
     # Get spawn points
-    self.vehicle_spawn_points = list(self._world.get_map().get_spawn_points())
-    self.walker_spawn_points = []
+    self._vehicle_spawn_points = list(self._world.get_map().get_spawn_points())
+    self._vehicles = []
+    self._vehicles_history = []
+    self._walker_spawn_points = []
     for i in range(self.number_of_walkers):
       spawn_point = carla.Transform()
       loc = self._world.get_random_location_from_navigation()
       if (loc != None):
         spawn_point.location = loc
-        self.walker_spawn_points.append(spawn_point)
+        self._walker_spawn_points.append(spawn_point)
 
     # Create the ego vehicle blueprint
     self.ego_bp = self._create_vehicle_bluepprint(params['ego_vehicle_filter'], color='49,8,8')
@@ -117,17 +111,6 @@ class CarlaBEVEnv(gym.Env):
     self.collision_hist_l = 1 # collision history length
     self.collision_bp = self._world.get_blueprint_library().find('sensor.other.collision')
 
-    # Camera sensor
-    # self.camera_img = np.zeros((self.display_size[0], self.display_size[1], 3), dtype=np.uint8)
-    # self.camera_trans = carla.Transform(carla.Location(x=0.8, z=1.7))
-    # self.camera_bp = self._world.get_blueprint_library().find('sensor.camera.rgb')
-    # # Modify the attributes of the blueprint to set image resolution and field of view.
-    # self.camera_bp.set_attribute('image_size_x', str(self.display_size[0]))
-    # self.camera_bp.set_attribute('image_size_y', str(self.display_size[1]))
-    # self.camera_bp.set_attribute('fov', '110')
-    # # Set the time in seconds between sensor captures
-    # self.camera_bp.set_attribute('sensor_tick', '0.02')
-
     # Set fixed simulation step for synchronous mode
     self.settings = self._world.get_settings()
     self.settings.fixed_delta_seconds = self.dt
@@ -135,81 +118,124 @@ class CarlaBEVEnv(gym.Env):
     # Disable rendering if not using camera
     self.settings.no_rendering_mode = True
 
+    # Enable sync mode
+    self._set_synchronous_mode(True)
+    self._tm.set_synchronous_mode(True)
+
     # Record the time of total steps and resetting steps
     self.reset_step = 0
     self.total_step = 0
+
+    self.collision_sensor = None
     
     # Initialize the renderer
     self._init_renderer()
 
-    # Get pixel grid points
-    if self.pixor:
-      x, y = np.meshgrid(np.arange(self.pixor_size), np.arange(self.pixor_size)) # make a canvas with coordinates
-      x, y = x.flatten(), y.flatten()
-      self.pixel_grid = np.vstack((x, y)).T
-
-  def reset(self):
+  def reset(self, vehicle_positions=None):
     # Clear sensor objects  
     self.collision_sensor = None
-    self.camera_sensor = None
 
     # Delete sensors, vehicles and walkers
-    self._clear_all_actors(['sensor.other.collision', 'vehicle.*', 'controller.ai.walker', 'walker.*']) # 'sensor.camera.rgb'
+    self._clear_all_actors(['sensor.other.collision', 'vehicle.*', 'controller.ai.walker', 'walker.*'])
+    self._vehicles = []
+    self.ego = None
+    self._vehicles_history = []
 
     # Disable sync mode
     self._set_synchronous_mode(False)
 
-    # Spawn surrounding vehicles
-    random.shuffle(self.vehicle_spawn_points)
-    count = self.number_of_vehicles
-    if count > 0:
-      for spawn_point in self.vehicle_spawn_points:
-        if self._try_spawn_random_vehicle_at(spawn_point, number_of_wheels=[4]):
-          count -= 1
-        if count <= 0:
+    # Spawn surrounding vehicles and ego
+    spawned_vehicle_positions = {}
+    if vehicle_positions:
+      for time_step in vehicle_positions: # reversed
+        for key, pos in time_step.items():
+          if key != "ego":
+            spawn_point = carla.Transform(carla.Location(*pos[:3]), carla.Rotation(*pos[3:]))
+            vehicle, loc = self._try_spawn_random_vehicle_at(spawn_point, number_of_wheels=[4])
+            if vehicle:
+              self._vehicles.append(vehicle)
+              spawned_vehicle_positions[vehicle.id] = loc
+            else:
+              log.debug(f"Could not spawn vehicle at {pos}")
+
+        pos = time_step["ego"]
+        spawn_point = carla.Transform(carla.Location(*pos[:3]), carla.Rotation(*pos[3:]))
+        for i in range(5):
+          if i < 4:
+            vehicle, loc = self._try_spawn_ego_vehicle_at(self._augment_transform(spawn_point))
+          else:
+            vehicle, loc = self._try_spawn_ego_vehicle_at(spawn_point)
+          if vehicle:
+            break
+
+        if vehicle:
+          log.info("Collision scenario!")
+          spawned_vehicle_positions["ego"] = loc
           break
-    while count > 0:
-      if self._try_spawn_random_vehicle_at(random.choice(self.vehicle_spawn_points), number_of_wheels=[4]):
-        count -= 1
+        else:
+          log.error(f"Could not spawn ego at {pos}")
+          self._vehicles = []
+          self._clear_all_actors(['vehicle.*'])
+      if self.ego is None:
+        self.reset()
+
+    if self.ego is None: # Havent spawned ego. Lets sample from initial distribution.
+      random.shuffle(self._vehicle_spawn_points)
+      count = self.number_of_vehicles
+      if count > 0:
+        for spawn_point in self._vehicle_spawn_points:
+          vehicle, loc = self._try_spawn_random_vehicle_at(spawn_point, number_of_wheels=[4])
+          if vehicle:
+            self._vehicles.append(vehicle)
+            spawned_vehicle_positions[vehicle.id] = loc
+            count -= 1
+          if count <= 0:
+            break
+      while count > 0:
+        vehicle, loc = self._try_spawn_random_vehicle_at(random.choice(self._vehicle_spawn_points), number_of_wheels=[4])
+        if vehicle:
+          self._vehicles.append(vehicle)
+          spawned_vehicle_positions[vehicle.id] = loc
+          count -= 1
+      
+      ego_spawn_times = 0
+      while True:
+        if ego_spawn_times > self.max_ego_spawn_times:
+          self.reset()
+
+        if self.task_mode == 'random':
+          transform = random.choice(self._vehicle_spawn_points)
+        if self.task_mode == 'roundabout':
+          self.start=[52.1+np.random.uniform(-5,5),-4.2, 178.66] # random
+          # self.start=[52.1,-4.2, 178.66] # static
+          transform = set_carla_transform(self.start)
+        vehicle, loc = self._try_spawn_ego_vehicle_at(transform)
+        if vehicle:
+          spawned_vehicle_positions["ego"] = loc
+          break
+        else:
+          ego_spawn_times += 1
+          time.sleep(0.1)
+    
+    for veh in self._vehicles:
+      veh.set_autopilot(True, tm_port=self._tm_port)
 
     # Spawn pedestrians
-    random.shuffle(self.walker_spawn_points)
+    random.shuffle(self._walker_spawn_points)
     count = self.number_of_walkers
     if count > 0:
-      for spawn_point in self.walker_spawn_points:
+      for spawn_point in self._walker_spawn_points:
         if self._try_spawn_random_walker_at(spawn_point):
           count -= 1
         if count <= 0:
           break
     while count > 0:
-      if self._try_spawn_random_walker_at(random.choice(self.walker_spawn_points)):
+      if self._try_spawn_random_walker_at(random.choice(self._walker_spawn_points)):
         count -= 1
 
-    # Get actors polygon list
-    self.vehicle_polygons = []
-    vehicle_poly_dict = self._get_actor_polygons('vehicle.*')
-    self.vehicle_polygons.append(vehicle_poly_dict)
-    self.walker_polygons = []
-    walker_poly_dict = self._get_actor_polygons('walker.*')
-    self.walker_polygons.append(walker_poly_dict)
-
-    # Spawn the ego vehicle
-    ego_spawn_times = 0
-    while True:
-      if ego_spawn_times > self.max_ego_spawn_times:
-        self.reset()
-
-      if self.task_mode == 'random':
-        transform = random.choice(self.vehicle_spawn_points)
-      if self.task_mode == 'roundabout':
-        self.start=[52.1+np.random.uniform(-5,5),-4.2, 178.66] # random
-        # self.start=[52.1,-4.2, 178.66] # static
-        transform = set_carla_transform(self.start)
-      if self._try_spawn_ego_vehicle_at(transform):
-        break
-      else:
-        ego_spawn_times += 1
-        time.sleep(0.1)
+    # Get actor locations
+    # self._world.tick()
+    self._vehicles_history.append(spawned_vehicle_positions)
 
     # Add collision sensor
     self.collision_sensor = self._world.spawn_actor(self.collision_bp, carla.Transform(), attach_to=self.ego)
@@ -222,16 +248,6 @@ class CarlaBEVEnv(gym.Env):
         self.collision_hist.pop(0)
     self.collision_hist = []
 
-    # Add camera sensor
-    # self.camera_sensor = self._world.spawn_actor(self.camera_bp, self.camera_trans, attach_to=self.ego)
-    # self.camera_sensor.listen(lambda data: get_camera_img(data))
-    # def get_camera_img(data):
-    #   array = np.frombuffer(data.raw_data, dtype = np.dtype("uint8"))
-    #   array = np.reshape(array, (data.height, data.width, 4))
-    #   array = array[:, :, :3]
-    #   array = array[:, :, ::-1]
-    #   self.camera_img = array
-
     # Update timesteps
     self.time_step=0
     self.reset_step+=1
@@ -242,12 +258,18 @@ class CarlaBEVEnv(gym.Env):
     self.routeplanner = RoutePlanner(self.ego, self.max_waypt)
     self.waypoints, _, self.vehicle_front = self.routeplanner.run_step()
 
-    # Set ego information for render
-    # self.birdeye_render.set_hero(self.ego, self.ego.id)
-
     return self._get_obs()
   
   def step(self, action):
+    if self._terminal():
+      log.warning("Stepping terminated env")
+
+    # Record new vehicle locations every delta steps
+    if (self.time_step + 1) % self.delta_past_step == 0:
+      self._vehicles_history.append(self._get_vehicle_transforms())
+    while len(self._vehicles_history) > self.max_past_step:
+      self._vehicles_history.pop(0)
+
     # Calculate acceleration and steering
     if self.discrete:
       acc = self.discrete_act[0][action//self.n_steer]
@@ -270,30 +292,22 @@ class CarlaBEVEnv(gym.Env):
 
     self._world.tick()
 
-    # Append actors polygon list
-    vehicle_poly_dict = self._get_actor_polygons('vehicle.*')
-    self.vehicle_polygons.append(vehicle_poly_dict)
-    while len(self.vehicle_polygons) > self.max_past_step:
-      self.vehicle_polygons.pop(0)
-    walker_poly_dict = self._get_actor_polygons('walker.*')
-    self.walker_polygons.append(walker_poly_dict)
-    while len(self.walker_polygons) > self.max_past_step:
-      self.walker_polygons.pop(0)
-
     # route planner
     self.waypoints, _, self.vehicle_front = self.routeplanner.run_step()
 
     # state information
     info = {
       'waypoints': self.waypoints,
-      'vehicle_front': self.vehicle_front
+      'vehicle_front': self.vehicle_front,
+      'vehicle_history': self._vehicles_history,
+      'collision': len(self.collision_hist) > 0,
     }
     
     # Update timesteps
     self.time_step += 1
     self.total_step += 1
 
-    return (self._get_obs(), self._get_reward(), self._terminal(), copy.deepcopy(info))
+    return (self._get_obs(), self._get_reward(action), self._terminal(), copy.deepcopy(info))
 
   def seed(self, seed=None):
     self.np_random, seed = seeding.np_random(seed)
@@ -301,6 +315,11 @@ class CarlaBEVEnv(gym.Env):
 
   def render(self, mode):
     pass
+
+  def _augment_transform(self, transform):
+    # Augment the yaw heading
+    yaw_delta = (random.random()*2-1)*20
+    return carla.Transform(transform.location, carla.Rotation(0.0, transform.rotation.yaw + yaw_delta, 0.0))
 
   def _create_vehicle_bluepprint(self, actor_filter, color=None, number_of_wheels=[4]):
     """Create the blueprint for a specific actor type.
@@ -338,7 +357,7 @@ class CarlaBEVEnv(gym.Env):
       'crop_type': BirdViewCropType.FRONT_AND_REAR_AREA,
       'render_lanes_on_junctions': True,
     }
-    self.birdeye_render = BirdViewProducer(self.client, **birdeye_params)
+    self.birdeye_render = BirdViewProducer(self._client, **birdeye_params)
 
   def _set_synchronous_mode(self, synchronous = True):
     """Set whether to use the synchronous mode.
@@ -357,11 +376,28 @@ class CarlaBEVEnv(gym.Env):
     """
     blueprint = self._create_vehicle_bluepprint('vehicle.audi.a2', number_of_wheels=number_of_wheels) #vehicle.*
     blueprint.set_attribute('role_name', 'autopilot')
+    vehicle, location = self._try_spawn_actor_robust(blueprint, transform)
+    if vehicle:
+      return vehicle, location
+    return False, None
+  
+  def _try_spawn_actor_robust(self, blueprint, transform):
     vehicle = self._world.try_spawn_actor(blueprint, transform)
-    if vehicle is not None:
-      vehicle.set_autopilot(True, tm_port=self._tm_port)
-      return True
-    return False
+    if vehicle:
+      return vehicle, [transform.location.x, transform.location.y, transform.location.z, 0.0, transform.rotation.yaw, 0.0]
+    spawn_point = carla.Transform(carla.Location(transform.location.x, transform.location.y, 0.2753), transform.rotation)
+    vehicle = self._world.try_spawn_actor(blueprint, spawn_point)
+    if vehicle:
+      return vehicle, [transform.location.x, transform.location.y, 0.2753, 0.0, transform.rotation.yaw, 0.0]
+    spawn_point = carla.Transform(carla.Location(transform.location.x, transform.location.y, max(transform.location.z + 0.05, 0.1)), transform.rotation)
+    vehicle = self._world.try_spawn_actor(blueprint, spawn_point)
+    if vehicle:
+      return vehicle, [transform.location.x, transform.location.y, max(transform.location.z + 0.05, 0.1), 0.0, transform.rotation.yaw, 0.0]
+    spawn_point = carla.Transform(carla.Location(transform.location.x, transform.location.y, 0.35), transform.rotation)
+    vehicle = self._world.try_spawn_actor(blueprint, spawn_point)
+    if vehicle:
+      return vehicle, [transform.location.x, transform.location.y, 0.35, 0.0, transform.rotation.yaw, 0.0]
+    return None, None
 
   def _try_spawn_random_walker_at(self, transform):
     """Try to spawn a walker at specific transform with random bluprint.
@@ -400,54 +436,40 @@ class CarlaBEVEnv(gym.Env):
     vehicle = None
     # Check if ego position overlaps with surrounding vehicles
     overlap = False
-    for idx, poly in self.vehicle_polygons[-1].items():
-      poly_center = np.mean(poly, axis=0)
-      ego_center = np.array([transform.location.x, transform.location.y])
-      dis = np.linalg.norm(poly_center - ego_center)
-      if dis > 8:
-        continue
-      else:
-        overlap = True
-        break
+    # for actor in self._vehicles_history[-1].values():
+    #   actor_center = np.array(actor[:2])
+    #   ego_center = np.array([transform.location.x, transform.location.y])
+    #   dis = np.linalg.norm(actor_center - ego_center)
+    #   if dis > 8:
+    #     continue
+    #   else:
+    #     overlap = True
+    #     break
 
     if not overlap:
-      vehicle = self._world.try_spawn_actor(self.ego_bp, transform)
+      vehicle, location = self._try_spawn_actor_robust(self.ego_bp, transform)
 
     if vehicle is not None:
-      self.ego=vehicle
-      return True
+      self.ego = vehicle
+      return True, location
       
-    return False
+    return False, None
+  
+  def _get_vehicle_transforms(self):
+    veh_transforms = {}
+    new_vehicles = []
+    for veh in self._vehicles:
+      if veh.is_alive:
+        new_vehicles.append(veh)
+        transform = veh.get_transform()
+        veh_transforms[veh.id] = [transform.location.x, transform.location.y, transform.location.z, 0.0, transform.rotation.yaw, 0.0]
+    
+    self._vehicles = new_vehicles
 
-  def _get_actor_polygons(self, filt):
-    """Get the bounding box polygon of actors.
-
-    Args:
-      filt: the filter indicating what type of actors we'll look at.
-
-    Returns:
-      actor_poly_dict: a dictionary containing the bounding boxes of specific actors.
-    """
-    actor_poly_dict={}
-    for actor in self._world.get_actors().filter(filt):
-      # Get x, y and yaw of the actor
-      trans=actor.get_transform()
-      x=trans.location.x
-      y=trans.location.y
-      yaw=trans.rotation.yaw/180*np.pi
-      # Get length and width
-      bb=actor.bounding_box
-      l=bb.extent.x
-      w=bb.extent.y
-      # Get bounding box polygon in the actor's local coordinate
-      poly_local=np.array([[l,w],[l,-w],[-l,-w],[-l,w]]).transpose()
-      # Get rotation matrix to transform to global coordinate
-      R=np.array([[np.cos(yaw),-np.sin(yaw)],[np.sin(yaw),np.cos(yaw)]])
-      # Get global bounding box polygon
-      poly=np.matmul(R,poly_local).transpose()+np.repeat([[x,y]],4,axis=0)
-      actor_poly_dict[actor.id]=poly
-    return actor_poly_dict
-
+    transform = self.ego.get_transform()
+    veh_transforms["ego"] = [transform.location.x, transform.location.y, transform.location.z, 0.0, transform.rotation.yaw, 0.0]
+    return veh_transforms
+  
   def _get_obs(self):
     """Get the observations."""
     ## Birdeye rendering
@@ -461,11 +483,6 @@ class CarlaBEVEnv(gym.Env):
     if not self._headless:
       birdeye_surface = rgb_to_display_surface(birdeye_rgb, self.display_size)
       self.display.blit(birdeye_surface, (0, 0))
-
-    ## Display camera image
-    # camera = resize(self.camera_img, self.display_size) * 255
-    # camera_surface = rgb_to_display_surface(camera, self.display_size)
-    # self.display.blit(camera_surface, (self.display_size[0], 0))
 
     # Display on pygame
     if not self._headless:
@@ -483,59 +500,18 @@ class CarlaBEVEnv(gym.Env):
     speed = np.sqrt(v.x**2 + v.y**2)
     state = np.array([lateral_dis, - delta_yaw, speed, self.vehicle_front])
 
-    if self.pixor:
-      ## Vehicle classification and regression maps (requires further normalization)
-      vh_clas = np.zeros((self.pixor_size, self.pixor_size))
-      vh_regr = np.zeros((self.pixor_size, self.pixor_size, 6))
-
-      # Generate the PIXOR image. Note in CARLA it is using left-hand coordinate
-      # Get the 6-dim geom parametrization in PIXOR, here we use pixel coordinate
-      for actor in self._world.get_actors().filter('vehicle.*'):
-        x, y, yaw, l, w = get_info(actor)
-        x_local, y_local, yaw_local = get_local_pose((x, y, yaw), (ego_x, ego_y, ego_yaw))
-        if actor.id != self.ego.id:
-          if abs(y_local)<self.obs_range/2+1 and x_local<self.obs_range-self.d_behind+1 and x_local>-self.d_behind-1:
-            x_pixel, y_pixel, yaw_pixel, l_pixel, w_pixel = get_pixel_info(
-              local_info=(x_local, y_local, yaw_local, l, w),
-              d_behind=self.d_behind, obs_range=self.obs_range, image_size=self.pixor_size)
-            cos_t = np.cos(yaw_pixel)
-            sin_t = np.sin(yaw_pixel)
-            logw = np.log(w_pixel)
-            logl = np.log(l_pixel)
-            pixels = get_pixels_inside_vehicle(
-              pixel_info=(x_pixel, y_pixel, yaw_pixel, l_pixel, w_pixel),
-              pixel_grid=self.pixel_grid)
-            for pixel in pixels:
-              vh_clas[pixel[0], pixel[1]] = 1
-              dx = x_pixel - pixel[0]
-              dy = y_pixel - pixel[1]
-              vh_regr[pixel[0], pixel[1], :] = np.array(
-                [cos_t, sin_t, dx, dy, logw, logl])
-
-      # Flip the image matrix so that the origin is at the left-bottom
-      vh_clas = np.flip(vh_clas, axis=0)
-      vh_regr = np.flip(vh_regr, axis=0)
-
-      # Pixor state, [x, y, cos(yaw), sin(yaw), speed]
-      pixor_state = [ego_x, ego_y, np.cos(ego_yaw), np.sin(ego_yaw), speed]
-
     obs = {
-      # 'camera':camera.astype(np.uint8),
       'birdeye': birdeye_rgb,
       'state': state,
     }
 
-    if self.pixor:
-      obs.update({
-        'vh_clas':np.expand_dims(vh_clas, -1).astype(np.float32),
-        'vh_regr':vh_regr.astype(np.float32),
-        'pixor_state': pixor_state,
-      })
-
     return obs
 
-  def _get_reward(self):
+  def _get_reward(self, action):
     """Calculate the step reward."""
+
+    steer = action[1]
+
     # reward for speed tracking
     v = self.ego.get_velocity()
     speed = np.sqrt(v.x**2 + v.y**2)
@@ -547,7 +523,7 @@ class CarlaBEVEnv(gym.Env):
       r_collision = -1
 
     # reward for steering:
-    r_steer = -self.ego.get_control().steer**2
+    r_steer = -steer**2
 
     # reward for out of lane
     ego_x, ego_y = get_pos(self.ego)
@@ -566,7 +542,7 @@ class CarlaBEVEnv(gym.Env):
       r_fast = -1
 
     # cost for lateral acceleration
-    r_lat = - abs(self.ego.get_control().steer) * lspeed_lon**2
+    r_lat = - abs(steer) * lspeed_lon**2
 
     r = 200*r_collision + 1*lspeed_lon + 10*r_fast + 1*r_out + r_steer*5 + 0.2*r_lat - 0.1
 
@@ -609,6 +585,8 @@ class CarlaBEVEnv(gym.Env):
         if actor.is_alive:
           if actor.type_id == 'controller.ai.walker':
             actor.stop()
+          # if actor.type_id == 'sensor.other.collision':
+          #   actor.stop()
           actor.destroy()
     
   def __exit__(self, exception_type, exception_value, traceback):
@@ -618,6 +596,7 @@ class CarlaBEVEnv(gym.Env):
     self._clear_all_actors(['sensor.other.collision', 'vehicle.*', 'controller.ai.walker', 'walker.*']) 
     self._world.tick()
     self._set_synchronous_mode(False)
+    self._tm.set_synchronous_mode(False)
     self._client = None
     self._world = None
     self._tm = None

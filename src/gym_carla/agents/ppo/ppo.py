@@ -1,100 +1,35 @@
 import os
 import random
 import time
-from dataclasses import dataclass
 
 import gym
 import numpy as np
-import cv2
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import tyro
 from torch.utils.tensorboard import SummaryWriter
 
 from gym_carla.agents.birdview.birdview_wrapper import BirdviewWrapper
 from gym_carla.envs.misc import CarlaDummVecEnv
 from gym_carla.agents.ppo.ppo_policy import PpoPolicy
+from gym_carla.envs.misc import CarlaDummVecEnv, save_video
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 import hydra
+from pathlib import Path
+import time
+import logging
 
-# @dataclass
-# class Args:
-#     exp_name: str = os.path.basename(__file__)[: -len(".py")]
-#     """the name of this experiment"""
-#     seed: int = 1
-#     """seed of the experiment"""
-#     torch_deterministic: bool = True
-#     """if toggled, `torch.backends.cudnn.deterministic=False`"""
-#     cuda: bool = True
-#     """if toggled, cuda will be enabled by default"""
-#     # track: bool = False
-#     # """if toggled, this experiment will be tracked with Weights and Biases"""
-#     # wandb_project_name: str = "cleanRL"
-#     # """the wandb's project name"""
-#     # wandb_entity: str = None
-#     # """the entity (team) of wandb's project"""
-#     # capture_video: bool = False
-#     # """whether to capture videos of the agent performances (check out `videos` folder)"""
-#     save_model: bool = False
-#     """whether to save model into the `runs/{run_name}` folder"""
-#     # upload_model: bool = False
-#     # """whether to upload the saved model to huggingface"""
-#     # hf_entity: str = ""
-#     # """the user or org name of the model repository from the Hugging Face Hub"""
-
-#     # Algorithm specific arguments
-#     env_id: str = "HalfCheetah-v4"
-#     """the id of the environment"""
-#     total_timesteps: int = 5000 #512 #1000000
-#     """total timesteps of the experiments"""
-#     learning_rate: float = 3e-5#3e-4
-#     """the learning rate of the optimizer"""
-#     num_envs: int = 1
-#     """the number of parallel game environments"""
-#     num_steps: int = 256 # 2048
-#     """the number of steps to run in each environment per policy rollout"""
-#     anneal_lr: bool = True
-#     """Toggle learning rate annealing for policy and value networks"""
-#     gamma: float = 0.99
-#     """the discount factor gamma"""
-#     gae_lambda: float = 0.95
-#     """the lambda for the general advantage estimation"""
-#     num_minibatches: int = 32
-#     """the number of mini-batches"""
-#     update_epochs: int = 10
-#     """the K epochs to update the policy"""
-#     norm_adv: bool = True
-#     """Toggles advantages normalization"""
-#     clip_coef: float = 0.2
-#     """the surrogate clipping coefficient"""
-#     clip_vloss: bool = True
-#     """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
-#     ent_coef: float = 0.0
-#     """coefficient of the entropy"""
-#     vf_coef: float = 0.5
-#     """coefficient of the value function"""
-#     max_grad_norm: float = 0.5
-#     """the maximum norm for the gradient clipping"""
-#     target_kl: float = None
-#     """the target KL divergence threshold"""
-
-#     # to be filled in runtime
-#     batch_size: int = 0
-#     """the batch size (computed in runtime)"""
-#     minibatch_size: int = 0
-#     """the mini-batch size (computed in runtime)"""
-#     num_iterations: int = 0
-#     """the number of iterations (computed in runtime)"""
+log = logging.getLogger(__name__)
 
 
 def make_env(
     env_name="carla-bev-v0",
-    number_of_vehicles=25,
+    number_of_vehicles=50,
     number_of_walkers=0,
-    display_size=256,
-    max_past_step=1,
+    display_size=128,
+    max_past_step=2,
+    delta_past_step=5,
     dt=0.1,
     discrete=False,
     discrete_acc=[-3.0, 0.0, 3.0],
@@ -105,7 +40,7 @@ def make_env(
     port=4000,
     town="Town03",
     task_mode="random",
-    max_time_episode=500,
+    max_time_episode=1024,
     max_waypt=12,
     obs_range=32,
     lidar_bin=0.25,
@@ -114,8 +49,6 @@ def make_env(
     desired_speed=8,
     max_ego_spawn_times=200,
     display_route=True,
-    pixor_size=64,
-    pixor=False,
     seed=None,
     headless=True,
 ):
@@ -125,6 +58,7 @@ def make_env(
         "number_of_walkers": number_of_walkers,
         "display_size": display_size,  # screen size of bird-eye render
         "max_past_step": max_past_step,  # the number of past steps to draw
+        "delta_past_step": delta_past_step,
         "dt": dt,  # time interval between two frames
         "discrete": discrete,  # whether to use discrete control space
         "discrete_acc": discrete_acc,  # discrete value of accelerations
@@ -144,14 +78,11 @@ def make_env(
         "desired_speed": desired_speed,  # desired speed (m/s)
         "max_ego_spawn_times": max_ego_spawn_times,  # maximum times to spawn ego vehicle
         "display_route": display_route,  # whether to render the desired route
-        "pixor_size": pixor_size,  # size of the pixor labels
-        "pixor": pixor,  # whether to output PIXOR observation
         "seed": seed,
         "headless": headless,
     }
 
-    gym_spec = gym.spec(env_name)
-    env = gym_spec.make(params=env_params)
+    env = gym.make(env_name, params=env_params)
     env = BirdviewWrapper(env)
     return env
 
@@ -162,7 +93,7 @@ def run_single_experiment(cfg, seed, save_path, port):
     cfg.agent.minibatch_size = int(cfg.agent.batch_size // cfg.agent.num_minibatches)
     print("batch size: ", cfg.agent.batch_size)
     print("Minibatch size set as :", cfg.agent.minibatch_size)
-    cfg.num_iterations = cfg.total_timesteps // cfg.agent.batch_size
+    num_iterations = cfg.total_timesteps // cfg.agent.batch_size
     run_name = f"{cfg.env_id}__{exp_name}__{cfg.seed}__{int(time.time())}"
 
     writer = SummaryWriter(f"runs/{run_name}")
@@ -177,7 +108,7 @@ def run_single_experiment(cfg, seed, save_path, port):
 
     # TODO: eventually we want many envs!!
     # enforcing that max steps are more than num steps here
-    env = CarlaDummVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town, port=port, seed=seed, max_time_episode=max_steps, number_of_vehicles=num_vehicles) for env_name, env_town, port, max_steps, num_vehicles  in [(cfg.env_id, cfg.town, port, cfg.num_steps+1, cfg.num_vehicles)]])
+    env = CarlaDummVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town, port=port, seed=seed, max_time_episode=max_steps, number_of_vehicles=num_vehicles) for env_name, env_town, port, max_steps, num_vehicles  in [(cfg.env_id, cfg.town, port, cfg.num_steps-1, cfg.num_vehicles)]])
     # env = DummyVecEnv([make_env(env_name=cfg.env_id, town=cfg.town)])
     
     agent = PpoPolicy(env.observation_space, env.action_space, distribution_kwargs=cfg.agent.distribution_kwargs).to(device)
@@ -187,9 +118,9 @@ def run_single_experiment(cfg, seed, save_path, port):
     obs = {}
     for k, s in env.observation_space.spaces.items():
         obs[k] = torch.zeros((cfg.num_steps, env.num_envs,) + s.shape).to(device)
-    actions = torch.zeros((cfg.num_steps, cfg.num_envs) + env.action_space.shape).to(
-        device
-    )
+    actions = torch.zeros((cfg.num_steps, cfg.num_envs) + env.action_space.shape).to(device)
+    mus = torch.zeros((cfg.num_steps, cfg.num_envs) + env.action_space.shape).to(device)
+    sigmas = torch.zeros((cfg.num_steps, cfg.num_envs) + env.action_space.shape).to(device)
     logprobs = torch.zeros((cfg.num_steps, cfg.num_envs)).to(device)
     rewards = torch.zeros((cfg.num_steps, cfg.num_envs)).to(device)
     dones = torch.zeros((cfg.num_steps, cfg.num_envs)).to(device)
@@ -209,48 +140,72 @@ def run_single_experiment(cfg, seed, save_path, port):
     kl_early_stop = 0
     t_train_values = 0.0
 
-    for iteration in range(1, cfg.num_iterations + 1):
-        next_obs = env.reset()
+    collision_scenarios = []
+    episodic_rewards_list = []
+    episodic_lens_list = []
+    next_obs = env.reset()
+    for iteration in range(1, num_iterations + 1):
+        
         next_done = torch.zeros(env.num_envs).to(device)
         print("Iteration:", iteration)
         # Annealing the rate if instructed to do so.
         if cfg.agent.anneal_lr:
-            frac = 1.0 - (iteration - 1.0) / cfg.num_iterations
+            frac = 1.0 - (iteration - 1.0) / num_iterations
             lrnow = frac * cfg.agent.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
 
         print("Collecting experience...")
         ep_start_idx = [0]
+        collision_scenario_idx = []
+        collision_scenario_lens = []
         ep_lens = []
+        collision_scenario = False
         for step in range(0, cfg.num_steps):
             global_step += cfg.num_envs
             for k, v in next_obs.items():
                 obs[k][step] = torch.Tensor(v).to(device)
             dones[step] = next_done
+            if next_done:
+                # Do this with probability p
+                if len(collision_scenarios) > cfg.min_collision_scenes and random.random() < cfg.p:
+                    log.info(f"Reset to collision scenario. Step: {global_step}")
+                    next_obs = env.reset(vehicle_positions=random.choice(collision_scenarios))
+                    collision_scenario = True
+                    collision_scenario_idx.append(step)
+                else:
+                    collision_scenario = False
 
             with torch.no_grad():
                 action, value, log_prob, mu, sigma, _ = agent.forward(next_obs)
                 values[step] = value.flatten()
             actions[step] = action
+            mus[step] = mu
+            sigmas[step] = sigma
             logprobs[step] = log_prob
 
             next_obs, reward, next_done, infos = env.step(action.cpu().numpy())
             rewards[step] = torch.Tensor(reward).to(device).view(-1)
             next_done = torch.Tensor(next_done).to(device)
 
-            print("Step:", step)
-            if "final_info" in infos:
-                print(">>> if final_info in infos")
-                for info in infos["final_info"]:
-                    print("for info in infos[\"final_info\"]")
+            print("Step:", step, "  Iteration:", iteration)
+            
+            
             for info in infos:
                 if(next_done or step == (cfg.num_steps-1)):
                     if "episode" in info["final_info"]:
                         ret = info["final_info"]["episode"]["r"]
                         ep_len = info["final_info"]["episode"]["l"]
                         ep_lens.append(int(ep_len))
+                        if collision_scenario:
+                            collision_scenario_lens.append(int(ep_len))
                         if step < cfg.num_steps-1:
                             ep_start_idx.append(step)
+                        
+                        episodic_rewards_list.append(ret)
+                        episodic_lens_list.append(ep_len)
+                        if info["collision"] and not collision_scenario:
+                            log.info(f"Collision scenarios: {len(collision_scenarios)}. Step: {global_step}")
+                            collision_scenarios.append(info["vehicle_history"])
                         print(
                             f"global_step={global_step}, episodic_return={ret}"
                         )
@@ -260,6 +215,10 @@ def run_single_experiment(cfg, seed, save_path, port):
                         writer.add_scalar(
                             "charts/episodic_length", ep_len, global_step
                         )
+                        writer.add_scalar(
+                            "charts/average_reward_in_episode", ret/ep_len, global_step
+                        )
+
         env.clean()
 
         # bootstrap value if not done
@@ -282,18 +241,11 @@ def run_single_experiment(cfg, seed, save_path, port):
                 )
             returns = advantages + values
         
-        if cfg.save_video:
-            start_ep = max(len(ep_start_idx)-cfg.save_last_n, 0)
-            for i, start_step in enumerate(ep_start_idx[start_ep:]):
-                ep = i+start_ep
-                images = [obs['birdeye'][start_step+j, 0].cpu().numpy().astype(np.uint8) for j in range(ep_lens[ep])]
-                width, height = images[0].shape[:2]
-                out = cv2.VideoWriter(f"{save_path}/ep_{ep}.mp4", cv2.VideoWriter_fourcc(*'mp4v'), 10, (width, height))
-                for img in images:
-                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    out.write(img)
-                print(f"Saving video to {save_path}/ep_{ep}.mp4")
-                out.release()
+        #TODO : double check 
+        # if cfg.save_video:
+        #     save_video(obs['birdeye'], ep_start_idx, ep_lens, cfg.save_last_n, save_path)
+        #     if len(collision_scenario_idx) > 0:
+        #         save_video(obs['birdeye'], collision_scenario_idx, collision_scenario_lens, 5, save_path + "/collision")
 
         # flatten the batch
         b_obs = {}
@@ -302,6 +254,8 @@ def run_single_experiment(cfg, seed, save_path, port):
             b_obs[k] = obs[k].reshape((-1,) + obs[k].shape[2:])
         b_logprobs = logprobs.reshape(-1)
         b_actions = actions.reshape((-1,) + env.action_space.shape)
+        b_mus = mus.reshape((-1,) + env.action_space.shape)
+        b_sigmas = sigmas.reshape((-1,) + env.action_space.shape)
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
         b_values = values.reshape(-1)
@@ -317,16 +271,23 @@ def run_single_experiment(cfg, seed, save_path, port):
                 end = start + cfg.agent.minibatch_size
                 mb_inds = b_inds[start:end]
 
-                newvalue, newlogprob, entropy_loss, _ = agent.evaluate_actions(
+                newvalue, newlogprob, entropy_loss, distribution = agent.evaluate_actions(
                     {k: b_obs[k][mb_inds] for k in b_obs.keys()}, b_actions[mb_inds]
                 )
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
+                # with torch.no_grad():
+                #     # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                #     old_approx_kl = (-logratio).mean()
+                #     approx_kl = ((ratio - 1) - logratio).mean()
+                #     clipfracs += [((ratio - 1.0).abs() > cfg.agent.clip_coef).float().mean().item()]
+                
                 with torch.no_grad():
-                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                    old_distribution = agent.action_dist.proba_distribution(
+                        b_mus[mb_inds], b_sigmas[mb_inds])
                     old_approx_kl = (-logratio).mean()
-                    approx_kl = ((ratio - 1) - logratio).mean()
+                    approx_kl = torch.distributions.kl_divergence(old_distribution.distribution, distribution).mean()
                     clipfracs += [((ratio - 1.0).abs() > cfg.agent.clip_coef).float().mean().item()]
                 
                 mb_advantages = b_advantages[mb_inds]
@@ -353,7 +314,7 @@ def run_single_experiment(cfg, seed, save_path, port):
                 else:
                     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
-                loss = pg_loss - cfg.agent.ent_coef * entropy_loss + v_loss * cfg.agent.vf_coef
+                loss = pg_loss + cfg.agent.ent_coef * entropy_loss + v_loss * cfg.agent.vf_coef
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -379,10 +340,15 @@ def run_single_experiment(cfg, seed, save_path, port):
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
+    print("Saving these returns:", np.array(episodic_rewards_list))
+    np.save(f"{save_path}/episodic_rewards.npy", np.array(episodic_rewards_list))
+    np.save(f"{save_path}/episodic_lens.npy", np.array(episodic_lens_list))
+
     if cfg.save_model:
-        model_path = f"runs/{run_name}/{exp_name}.cleanrl_model"
+        model_path = f"{save_path}/policy.cleanrl_model"
         torch.save(agent.state_dict(), model_path)
         print(f"model saved to {model_path}")
+        
         # from cleanrl_utils.evals.ppo_eval import evaluate
 
         # episodic_returns = evaluate(
@@ -404,19 +370,29 @@ def run_single_experiment(cfg, seed, save_path, port):
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def run_experiment(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
-    # os.environ["SDL_VIDEODRIVER"] = "dummy"
     save_path = HydraConfig.get().runtime.output_dir
     print(">>> Storing outputs in: ", save_path)
-    os.makedirs("./results", exist_ok=True) # TODO: where we'll store results. we need to decide on which stats.
+    os.makedirs(save_path, exist_ok=True) # TODO: where we'll store results. we need to decide on which stats.
+    os.makedirs(save_path + "/collision", exist_ok=True)
     
-    gpu_id = HydraConfig.get().job.num % cfg.num_gpus
-    print("gpu id:", gpu_id)
-    print("---------------")
-    port = (gpu_id + 4)*1000
-    
-    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    run_single_experiment(cfg, cfg.seed, save_path, port)
+    result_file = Path(save_path).joinpath("episodic_rewards.npy")
+    if not(result_file.is_file()): # if results aren't there already
+        
+        num_gpus = len(cfg.gpu_ids)
+        gpu_id_idx = HydraConfig.get().job.num % num_gpus
+        gpu_id = cfg.gpu_ids[gpu_id_idx]
+        print("gpu id:", gpu_id)
+        print("---------------")
+        port = (gpu_id + 4)*1000
+        print("port:", port)
+        
+        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+        run_single_experiment(cfg, cfg.seed, save_path, port)
+        print("Experiment done!")
+        
+    else:
+        print("There are already save results for this hyperparam config. Terminating.")
 
 if __name__ == "__main__":
     run_experiment()
