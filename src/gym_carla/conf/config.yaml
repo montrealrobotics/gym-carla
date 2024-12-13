@@ -20,6 +20,7 @@ hydra:
           - num_test_episodes
           - num_test_steps
           - num_test_scenarios
+          - test_on_collisions
 
 
 seed: 1
@@ -42,3 +43,4 @@ min_collision_scenes: 20
 num_test_episodes: 0
 num_test_scenarios: 10
 num_test_steps: 1024
+test_on_collisions: false

@@ -13,9 +13,8 @@ from pathlib import Path
 """
 This runs a given policy in "model_path" in carla and gathers crash scenarios along with episodic returns and videos
 """
-#TODO: add ability to gather a minimum number of collisions.
 
-def gather_collision_scenarios(seed, env_id, town, port, max_steps, num_episodes, num_scenarios, num_vehicles, model_path, eval_save_path):
+def rollout_agent(seed, env_id, town, port, max_steps, num_episodes, num_scenarios, num_vehicles, model_path, eval_save_path, scenarios_path=None):
     
     os.makedirs(eval_save_path + "/collision", exist_ok=True)
     env = CarlaDummVecEnv(
@@ -31,10 +30,19 @@ def gather_collision_scenarios(seed, env_id, town, port, max_steps, num_episodes
         ]
     )
 
-    policy = PpoPolicy.load(model_path)[0]
-    policy = policy.eval()
+    if scenarios_path:
+        with open(scenarios_path, 'rb') as f:
+            test_collision_scenarios = pkl.load(f)
+        
 
-    obs = torch.zeros((max_steps, 1,) + env.observation_space.spaces['birdeye'].shape)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # policy = PpoPolicy.load(model_path)[0]
+    policy = PpoPolicy(env.observation_space, env.action_space, distribution_kwargs={"action_dependent_std": True}).to(device)
+    policy.load_state_dict(torch.load(model_path, weights_only=True, map_location=device))
+    policy.eval()
+
+    obs = torch.zeros((max_steps+1, 1,) + env.observation_space.spaces['birdeye'].shape)
     collision_scenarios = []
 
     episodic_rewards = []
@@ -45,8 +53,14 @@ def gather_collision_scenarios(seed, env_id, town, port, max_steps, num_episodes
             break
         if num_scenarios and len(collision_scenarios) >= num_scenarios:
             break
+        if scenarios_path and ep >= len(test_collision_scenarios):
+            break
         print(f"Episode {ep+1}")
-        next_obs = env.reset()
+        if len(test_collision_scenarios) > 0:
+            print(f"Reset to collision scenario")
+            next_obs = env.reset(vehicle_positions=test_collision_scenarios[ep])
+        else:
+            next_obs = env.reset()
 
         step = 0
         next_done = False
@@ -75,7 +89,7 @@ def gather_collision_scenarios(seed, env_id, town, port, max_steps, num_episodes
     np.save(f"{eval_save_path}/test_episodic_return.npy", np.array(episodic_rewards))
     np.save(f"{eval_save_path}/test_episodic_lens.npy", np.array(episodic_lens))
     if len(collision_scenarios) > 0:
-        with open(f"{eval_save_path}/test_collision_scenarios.pkl", 'wb') as f:
+        with open(f"{eval_save_path}/test_crashes.pkl", 'wb') as f:
             pkl.dump(collision_scenarios, f)
     print("Saved all files!")
 
@@ -84,6 +98,7 @@ def gather_collision_scenarios(seed, env_id, town, port, max_steps, num_episodes
 def main(cfg: DictConfig) -> None:
     save_path = HydraConfig.get().runtime.output_dir
     model_path = Path(save_path).joinpath("policy.ppo_model")
+    test_collision_scenarios = Path(save_path).joinpath("test_collision_scenarios.pkl") if cfg.test_on_collisions else None
 
     print(">>> Storing outputs in: ", save_path)
     print(">>> Reading in model from: ", model_path)
@@ -99,12 +114,13 @@ def main(cfg: DictConfig) -> None:
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
 
-    assert cfg.num_test_scenarios == 0 or cfg.num_test_episodes == 0, "Either evaluate on N episodes, or collect N crash scenarios"
+    assert (cfg.num_test_scenarios == 0) != (cfg.num_test_episodes == 0), "Either evaluate on N episodes, or collect N crash scenarios"
+    assert ((cfg.num_test_scenarios + cfg.num_test_episodes) == 0) != (test_collision_scenarios is None), "Either evaluate on given collision scenarios or rollout episodes"
 
     print(OmegaConf.to_yaml(cfg))
-    gather_collision_scenarios(seed=cfg.seed, env_id=cfg.env_id, town=cfg.town, port=port,
+    rollout_agent(seed=cfg.seed, env_id=cfg.env_id, town=cfg.town, port=port,
                                 max_steps=cfg.num_test_steps, num_episodes=cfg.num_test_episodes, num_scenarios=cfg.num_test_scenarios, num_vehicles=cfg.num_vehicles,
-                                model_path=model_path, eval_save_path=save_path)
+                                model_path=model_path, eval_save_path=save_path, scenarios_path=test_collision_scenarios)
 
 if __name__ == "__main__":
     """
