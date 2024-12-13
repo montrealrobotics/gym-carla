@@ -15,7 +15,7 @@ This runs a given policy in "model_path" in carla and gathers crash scenarios al
 """
 #TODO: add ability to gather a minimum number of collisions.
 
-def gather_collision_scenarios(seed, env_id, town, port, max_steps, num_episodes, num_vehicles, model_path, eval_save_path):
+def gather_collision_scenarios(seed, env_id, town, port, max_steps, num_episodes, num_scenarios, num_vehicles, model_path, eval_save_path):
     
     os.makedirs(eval_save_path + "/collision", exist_ok=True)
     env = CarlaDummVecEnv(
@@ -25,7 +25,7 @@ def gather_collision_scenarios(seed, env_id, town, port, max_steps, num_episodes
                 town=town,
                 port=port,
                 seed=seed,
-                max_time_episode=max_steps-1,
+                max_time_episode=max_steps,
                 number_of_vehicles=num_vehicles,
             )
         ]
@@ -39,7 +39,12 @@ def gather_collision_scenarios(seed, env_id, town, port, max_steps, num_episodes
 
     episodic_rewards = []
     episodic_lens = []
-    for ep in range(num_episodes):
+    ep = 0
+    while True:
+        if num_episodes and ep >= num_episodes:
+            break
+        if num_scenarios and len(collision_scenarios) >= num_scenarios:
+            break
         print(f"Episode {ep+1}")
         next_obs = env.reset()
 
@@ -62,13 +67,15 @@ def gather_collision_scenarios(seed, env_id, town, port, max_steps, num_episodes
             if info["collision"]:
                 print("Collision!")
                 collision_scenarios.append(info["vehicle_history"])
-                save_video(obs, [0], [ep_len-1], 1, eval_save_path + "/collision", prefix=f"ep_{ep}")
+                save_video(obs, [0], [ep_len], 1, eval_save_path + "/collision", prefix=f"ep_{ep}")\
+        
+        ep += 1
         
     
     np.save(f"{eval_save_path}/test_episodic_return.npy", np.array(episodic_rewards))
     np.save(f"{eval_save_path}/test_episodic_lens.npy", np.array(episodic_lens))
     if len(collision_scenarios) > 0:
-        with open(f"{eval_save_path}/test_collision_scenarios.npy", 'wb') as f:
+        with open(f"{eval_save_path}/test_collision_scenarios.pkl", 'wb') as f:
             pkl.dump(collision_scenarios, f)
     print("Saved all files!")
 
@@ -92,9 +99,11 @@ def main(cfg: DictConfig) -> None:
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
 
+    assert cfg.num_test_scenarios == 0 or cfg.num_test_episodes == 0, "Either evaluate on N episodes, or collect N crash scenarios"
+
     print(OmegaConf.to_yaml(cfg))
     gather_collision_scenarios(seed=cfg.seed, env_id=cfg.env_id, town=cfg.town, port=port,
-                                max_steps=cfg.num_test_steps, num_episodes=cfg.num_test_episodes, num_vehicles=cfg.num_vehicles,
+                                max_steps=cfg.num_test_steps, num_episodes=cfg.num_test_episodes, num_scenarios=cfg.num_test_scenarios, num_vehicles=cfg.num_vehicles,
                                 model_path=model_path, eval_save_path=save_path)
 
 if __name__ == "__main__":
