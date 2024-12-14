@@ -33,13 +33,13 @@ def rollout_agent(seed, env_id, town, port, max_steps, num_episodes, num_scenari
     if scenarios_path:
         with open(scenarios_path, 'rb') as f:
             test_collision_scenarios = pkl.load(f)
+    else:
+        test_collision_scenarios = []
         
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # policy = PpoPolicy.load(model_path)[0]
-    policy = PpoPolicy(env.observation_space, env.action_space, distribution_kwargs={"action_dependent_std": True}).to(device)
-    policy.load_state_dict(torch.load(model_path, weights_only=True, map_location=device))
+    policy = PpoPolicy.load(model_path)[0]
     policy.eval()
 
     obs = torch.zeros((max_steps+1, 1,) + env.observation_space.spaces['birdeye'].shape)
@@ -114,8 +114,7 @@ def main(cfg: DictConfig) -> None:
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
 
-    assert (cfg.num_test_scenarios == 0) != (cfg.num_test_episodes == 0), "Either evaluate on N episodes, or collect N crash scenarios"
-    assert ((cfg.num_test_scenarios + cfg.num_test_episodes) == 0) != (test_collision_scenarios is None), "Either evaluate on given collision scenarios or rollout episodes"
+    assert ((cfg.num_test_scenarios != 0) + (cfg.num_test_episodes != 0) + cfg.test_on_collisions) == 1, "Either evaluate on given collision scenarios or rollout episodes"
 
     print(OmegaConf.to_yaml(cfg))
     rollout_agent(seed=cfg.seed, env_id=cfg.env_id, town=cfg.town, port=port,
