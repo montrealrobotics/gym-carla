@@ -119,10 +119,23 @@ def run_single_experiment(cfg, seed, save_path, port):
 
     device = torch.device("cuda" if torch.cuda.is_available() and cfg.cuda else "cpu")
 
-    # TODO: eventually we want many envs!!
     # enforcing that max steps are more than num steps here
-    env = CarlaDummVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town, port=port, seed=seed, max_time_episode=max_steps, number_of_vehicles=num_vehicles) for env_name, env_town, port, max_steps, num_vehicles  in [(cfg.env_id, cfg.town, port, cfg.num_steps-1, cfg.num_vehicles)]])
-    # env = DummyVecEnv([make_env(env_name=cfg.env_id, town=cfg.town)])
+    env = CarlaDummVecEnv(
+        [
+            lambda env_name=env_name: make_env(
+                env_name=env_name, 
+                town=env_town, 
+                port=port, 
+                seed=seed, 
+                max_time_episode=max_steps, 
+                number_of_vehicles=num_vehicles,
+                delta_past_step=cfg.delta_past_step,
+                max_past_step=cfg.max_past_step,
+                headless=cfg.headless,
+            ) 
+            for env_name, env_town, port, max_steps, num_vehicles  in [(cfg.env_id, cfg.town, port, cfg.num_steps-1, cfg.num_vehicles)]
+        ]
+    )
     
     agent = PpoPolicy(env.observation_space, env.action_space, distribution_kwargs=cfg.agent.distribution_kwargs).to(device)
 
@@ -289,12 +302,6 @@ def run_single_experiment(cfg, seed, save_path, port):
                 )
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
-
-                # with torch.no_grad():
-                #     # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                #     old_approx_kl = (-logratio).mean()
-                #     approx_kl = ((ratio - 1) - logratio).mean()
-                #     clipfracs += [((ratio - 1.0).abs() > cfg.agent.clip_coef).float().mean().item()]
                 
                 with torch.no_grad():
                     old_distribution = agent.action_dist.proba_distribution(
@@ -361,21 +368,6 @@ def run_single_experiment(cfg, seed, save_path, port):
         model_path = f"{save_path}/policy.ppo_model"
         save_model(agent, optimizer, cfg, model_path)
         print(f"model saved to {model_path}")
-        
-        # from cleanrl_utils.evals.ppo_eval import evaluate
-
-        # episodic_returns = evaluate(
-        #     model_path,
-        #     make_env,
-        #     args.env_id,
-        #     eval_episodes=10,
-        #     run_name=f"{run_name}-eval",
-        #     Model=Agent,
-        #     device=device,
-        #     gamma=args.gamma,
-        # )
-        # for idx, episodic_return in enumerate(episodic_returns):
-        #     writer.add_scalar("eval/episodic_return", episodic_return, idx)
 
     env.close()
     writer.close()
@@ -392,7 +384,8 @@ def run_experiment(cfg: DictConfig) -> None:
     if not(result_file.is_file()): # if results aren't there already
         
         num_gpus = len(cfg.gpu_ids)
-        gpu_id_idx = HydraConfig.get().job.num % num_gpus
+        job_num = HydraConfig.get().job.num if "num" in HydraConfig.get().job else 0
+        gpu_id_idx = job_num % num_gpus
         gpu_id = cfg.gpu_ids[gpu_id_idx]
         print("gpu id:", gpu_id)
         print("---------------")

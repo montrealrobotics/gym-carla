@@ -22,7 +22,7 @@ hydra:
           - num_test_scenarios
           - test_on_collisions
 
-
+# Training
 seed: 1
 torch_deterministic: true
 cuda: true
@@ -37,10 +37,17 @@ gpu_ids: [0]
 save_last_n: 2
 save_video: true
 num_vehicles: 25
+headless: true
+
+## Resets
 p: 0.5
 min_collision_scenes: 20
+delta_past_step: 5
+max_past_step: 2
 
-num_test_episodes: 0
-num_test_scenarios: 10
+
+# Evaluation
+num_test_episodes: 20
+num_test_scenarios: 0
 num_test_steps: 1024
 test_on_collisions: false
