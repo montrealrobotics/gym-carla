@@ -5,18 +5,12 @@ import os
 from gym_carla.agents.ppo.ppo import make_env
 from gym_carla.agents.ppo.ppo_policy import PpoPolicy
 from gym_carla.envs.misc import CarlaDummVecEnv, save_video
-from hydra.core.hydra_config import HydraConfig
-from omegaconf import DictConfig, OmegaConf
-import hydra
-from pathlib import Path
 
-"""
-This runs a given policy in "model_path" in carla and gathers crash scenarios along with episodic returns and videos
-"""
 
-def rollout_agent(seed, env_id, town, port, max_steps, num_episodes, num_scenarios, num_vehicles, model_path, eval_save_path, scenarios_path=None):
+def rollout_agent(seed, env_id, town, port, max_steps, num_episodes, num_scenarios, num_vehicles, model_path, scenarios_path=None):
     
-    os.makedirs(eval_save_path + "/collision", exist_ok=True)
+    # eval_save_path="./myvideos"
+    # os.makedirs(eval_save_path + "/collision", exist_ok=True)
     env = CarlaDummVecEnv(
         [
             lambda env_name=env_id: make_env(
@@ -74,6 +68,8 @@ def rollout_agent(seed, env_id, town, port, max_steps, num_episodes, num_scenari
         for info in infos:
 
             ep_len = int(info["final_info"]["episode"]["l"]) #TODO: Need to save episodic length
+            # save_video(obs, [0], [ep_len], 1, eval_save_path + "/collision", prefix=f"ep_{ep}")
+
             ret = info["final_info"]["episode"]["r"]
             episodic_rewards.append(ret)
             episodic_lens.append(ep_len)
@@ -81,48 +77,34 @@ def rollout_agent(seed, env_id, town, port, max_steps, num_episodes, num_scenari
             if info["collision"]:
                 print("Collision!")
                 collision_scenarios.append(info["vehicle_history"])
-                save_video(obs, [0], [ep_len], 1, eval_save_path + "/collision", prefix=f"ep_{ep}")\
-        
+                # save_video(obs, [0], [ep_len], 1, eval_save_path + "/collision", prefix=f"ep_{ep}")
+        print("Gathered ", len(collision_scenarios), "collision scenarios out of", num_scenarios)
         ep += 1
         
+    return episodic_rewards, episodic_lens, collision_scenarios
     
-    np.save(f"{eval_save_path}/test_episodic_return.npy", np.array(episodic_rewards))
-    np.save(f"{eval_save_path}/test_episodic_lens.npy", np.array(episodic_lens))
-    if len(collision_scenarios) > 0:
-        with open(f"{eval_save_path}/test_crashes.pkl", 'wb') as f:
-            pkl.dump(collision_scenarios, f)
-    print("Saved all files!")
+
+#TODO: make num_steps set by command line args
+def generate_crash_data(eval_seed, base_train_policy_path, env_cfg, num_scenarios, port):
+    _, _, collision_scenarios = rollout_agent(seed=eval_seed, env_id=env_cfg["env_id"], town=env_cfg["town"],
+                   port=port, max_steps=env_cfg["num_steps"]-1,
+                    num_episodes=0, num_scenarios=num_scenarios, num_vehicles=env_cfg["num_vehicles"],
+                    model_path=base_train_policy_path, scenarios_path=None)
+    return collision_scenarios
+
+def evaluate_policy(eval_seed, post_train_policy_path, env_cfg, num_eval_episodes, port):
+    episodic_rewards, episodic_lens, _ = rollout_agent(seed=eval_seed, env_id=env_cfg["env_id"], town=env_cfg["town"],
+                   port=port, max_steps=env_cfg["num_steps"]-1,
+                    num_episodes=num_eval_episodes, num_scenarios=0, num_vehicles=env_cfg["num_vehicles"],
+                    model_path=post_train_policy_path, scenarios_path=None)
+    return episodic_rewards, episodic_lens
+
+def evaluate_policy_on_scenarios(eval_seed, post_train_policy_path, env_cfg, port, scenarios_path):
+    episodic_rewards, episodic_lens, _ = rollout_agent(seed=eval_seed, env_id=env_cfg["env_id"], town=env_cfg["town"],
+                   port=port, max_steps=env_cfg["num_steps"]-1,
+                    num_episodes=0, num_scenarios=0, num_vehicles=env_cfg["num_vehicles"],
+                    model_path=post_train_policy_path, scenarios_path=scenarios_path)
+    return episodic_rewards, episodic_lens
 
 
-@hydra.main(version_base=None, config_path="../../conf", config_name="config")
-def main(cfg: DictConfig) -> None:
-    save_path = HydraConfig.get().runtime.output_dir
-    model_path = Path(save_path).joinpath("policy.ppo_model")
-    test_collision_scenarios = Path(save_path).joinpath("test_collision_scenarios.pkl") if cfg.test_on_collisions else None
 
-    print(">>> Storing outputs in: ", save_path)
-    print(">>> Reading in model from: ", model_path)
-
-    num_gpus = len(cfg.gpu_ids)
-    gpu_id_idx = HydraConfig.get().job.num % num_gpus
-    gpu_id = cfg.gpu_ids[gpu_id_idx]
-    print("gpu id:", gpu_id)
-    print("---------------")
-    port = (gpu_id + 4)*1000
-    print("port:", port)
-    
-    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-
-    assert ((cfg.num_test_scenarios != 0) + (cfg.num_test_episodes != 0) + cfg.test_on_collisions) == 1, "Either evaluate on given collision scenarios or rollout episodes"
-
-    print(OmegaConf.to_yaml(cfg))
-    rollout_agent(seed=cfg.seed, env_id=cfg.env_id, town=cfg.town, port=port,
-                                max_steps=cfg.num_test_steps, num_episodes=cfg.num_test_episodes, num_scenarios=cfg.num_test_scenarios, num_vehicles=cfg.num_vehicles,
-                                model_path=model_path, eval_save_path=save_path, scenarios_path=test_collision_scenarios)
-
-if __name__ == "__main__":
-    """
-    python eval_agent.py --multirun hydra.sweep.dir=./results/hyperparam_experiment num_steps=1024 agent.learning_rate=0.0003  agent.num_minibatches=32 agent.update_epochs=10 total_timesteps=65536 num_vehicles=25 seed=0 gpu_ids=[0] num_test_episodes=30 num_test_steps=1024
-    """
-    main()

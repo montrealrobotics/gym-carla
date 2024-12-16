@@ -18,8 +18,8 @@ def get_average_episodic_reward(seeds_dir: Path):
 
     for s in seeds_dir_list:
 
-        p_reward = Path(seeds_dir).joinpath(s).joinpath("episodic_rewards.npy")
-        p_lens = Path(seeds_dir).joinpath(s).joinpath("episodic_lens.npy")
+        p_reward = Path(seeds_dir).joinpath(s).joinpath(f"train_episodic_rewards.npy")
+        p_lens = Path(seeds_dir).joinpath(s).joinpath(f"train_episodic_lens.npy")
         episodic_reward_arr = np.array(np.load(p_reward,  allow_pickle=True))
         episodic_len_arr = np.array(np.load(p_lens,  allow_pickle=True))
 
@@ -36,7 +36,7 @@ def get_episodic_reward(seeds_dir: Path):
 
     for s in seeds_dir_list:
 
-        p_reward = Path(seeds_dir).joinpath(s).joinpath("episodic_rewards.npy")
+        p_reward = Path(seeds_dir).joinpath(s).joinpath(f"train_episodic_rewards.npy")
         episodic_reward_arr = np.array(np.load(p_reward,  allow_pickle=True))
 
         episodic_reward.append(episodic_reward_arr)
@@ -91,7 +91,6 @@ def select_best_hyperparams(experiment_dir_path: str):
 
     hyperparams_strs = multirun_d["hydra"]["overrides"]["task"]
     exclude_keys = multirun_d["hydra"]["job"]["config"]["override_dirname"]["exclude_keys"]
-    base_results_path = multirun_d["hydra"]["sweep"]["dir"]
 
     def exclude_hyperparam(hp):
         for hp_exclude in exclude_keys:
@@ -101,17 +100,18 @@ def select_best_hyperparams(experiment_dir_path: str):
     
     hyperparams_strs = list(filter(exclude_hyperparam, hyperparams_strs))
     hyperparams = hyperparams_list_to_dict(hyperparams_strs)
-    hyperparam_paths = generate_hyperparam_paths(hyperparams, base_results_path)
+    hyperparam_paths = generate_hyperparam_paths(hyperparams, experiment_dir_path)
     
     best_hp = None
     best_m = -np.inf
     for hp in hyperparam_paths:
+        
         print("Processing:", hp)
         avg = np.mean(mean_episodic_reward_aross_runs(hp))
         if(avg > best_m):
             best_m = avg
             best_hp = hp
-    
+        print("----------")
     return best_hp, best_m
 
 
