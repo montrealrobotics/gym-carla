@@ -42,7 +42,7 @@ num_iterations: 0
 gpu_ids: [0]
 save_last_n: 2
 save_video: true
-num_vehicles: 25
+num_vehicles: 40
 min_collision_scenes: 20
 
 phase: base_train #post_train or base_train

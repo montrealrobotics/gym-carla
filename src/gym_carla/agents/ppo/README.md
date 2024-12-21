@@ -17,10 +17,10 @@ Every seed will have a directory that looks like this:
 ./results/hyperparam_experiment/phase_base_train/reset_False/hyperparam1/hyperparam2/...../seed_num/
 
 Inside this you should see:
-- collision <<< for videos of collisions
-- crash_scenarios.pkl <<< a list of any collision scenarios that we want to use later for resets
-- episodic_rewards.npy <<< a list where for each episode we recorded the cumulative reward
-- episodic_lens.npy <<< a list where for each episode we recorded how many steps were spent in it
+- train_collision_videos <<< for videos of collisions
+- train_crash_scenarios.pkl <<< a list of any collision scenarios that we want to use later for resets
+- train_episodic_rewards.npy <<< a list where for each episode we recorded the cumulative reward
+- trai_episodic_lens.npy <<< a list where for each episode we recorded how many steps were spent in it
 - policy.ppo_model <<< the trained model saved at the end
 
 You should also see a multirun.yaml file in ./results/hyperparam_experiment/phase_base_train/reset_False. This is crucial for hyperparameter selection.
@@ -47,6 +47,12 @@ Example:
 
 (1) Resets activated: python ppo.py --multirun exp_name="example_experiment" num_steps=1024 agent.learning_rate=0.00003  agent.num_minibatches=32 agent.update_epochs=10 total_timesteps=2048 num_vehicles=25 seed=0 gpu_ids=[0] phase=post_train reset=true p=0.5 model_and_data_dir="./results/example_experiment/phase_base_train/reset_False/agent.learning_rate-3e-05/agent.num_minibatches-32/agent.update_epochs-10/num_steps-1024/num_vehicles-25/seed\=0" > run_out_gpu0.txt &
 
+
+<!-- python ppo.py --multirun exp_name="dec17_experiment" num_steps=1024 agent.learning_rate=0.00003  agent.num_minibatches=32 agent.update_epochs=10 total_timesteps=1024 num_vehicles=40 seed=1 gpu_ids=[0] phase=post_train reset=true p=0.5 model_and_data_dir="/home/esraa/code/gym-carla/src/gym_carla/agents/ppo/results/dec17_experiment/phase_base_train/reset_False/agent.learning_rate-3e-05/agent.num_minibatches-32/agent.update_epochs-10/num_steps-1024/num_vehicles-40/seed\=1" > reset_post_0.txt & -->
+
+<!-- python ppo.py --multirun exp_name="dec17_experiment" num_steps=1024 agent.learning_rate=0.00003  agent.num_minibatches=32 agent.update_epochs=10 total_timesteps=1024 num_vehicles=40 seed=1 gpu_ids=[1] phase=post_train reset=false p=0.0 model_and_data_dir="/home/esraa/code/gym-carla/src/gym_carla/agents/ppo/results/dec17_experiment/phase_base_train/reset_False/agent.learning_rate-3e-05/agent.num_minibatches-32/agent.update_epochs-10/num_steps-1024/num_vehicles-40/seed\=1" > reset_post_1.txt & -->
+
+
 (2) No resets: python ppo.py --multirun exp_name="example_experiment" num_steps=1024 agent.learning_rate=0.00003  agent.num_minibatches=32 agent.update_epochs=10 total_timesteps=2048 num_vehicles=25 seed=0 gpu_ids=[0] phase=post_train reset=false p=0.0 model_and_data_dir="./results/example_experiment/phase_base_train/reset_False/agent.learning_rate-3e-05/agent.num_minibatches-32/agent.update_epochs-10/num_steps-1024/num_vehicles-25/seed\=0" > run_out_gpu0.txt &
 
 
@@ -61,10 +67,10 @@ Every seed will have a directory that looks like this:
 ./results/hyperparam_experiment/post_train/reset_False/hyperparam1/hyperparam2/...../seed_num/
 
 Inside each folder (whether reset or non-reset) this you should see:
-- collision <<< for videos of collisions
-- crash_scenarios.pkl <<< a list of any collision scenarios that we want to use later for resets
-- episodic_rewards.npy <<< a list where for each episode we recorded the cumulative reward
-- episodic_lens.npy <<< a list where for each episode we recorded how many steps were spent in it
+- train_collision_videos <<< for videos of collisions
+- train_crash_scenarios.pkl <<< a list of any collision scenarios that we want to use later for resets
+- train_episodic_rewards.npy <<< a list where for each episode we recorded the cumulative reward
+- train_episodic_lens.npy <<< a list where for each episode we recorded how many steps were spent in it
 - policy.ppo_model <<< the trained model saved at the end
 
 
@@ -74,6 +80,8 @@ Inside each folder (whether reset or non-reset) this you should see:
 Example command:
 
 python run_global_robustness_eval.py --exp-name=example_experiment --eval-seed=20 --num-eval-episodes=10 --policy-seeds-path="./results/example_experiment/phase_post_train/reset_False/agent.learning_rate-3e-05/agent.num_minibatches-32/agent.update_epochs-10/num_steps-1024/num_vehicles-25/p-0.0/" --env-cfg-yaml="../../conf/config.yaml"
+
+<!-- python run_global_robustness_eval.py --exp-name=dec17_experiment --eval-seed=20 --num-eval-episodes=30 --policy-seeds-path="/home/esraa/code/gym-carla/src/gym_carla/agents/ppo/results/dec17_experiment/phase_post_train/reset_False/agent.learning_rate-3e-05/agent.num_minibatches-32/agent.update_epochs-10/num_steps-1024/num_vehicles-40/p-0.0/" --env-cfg-yaml="../../conf/config.yaml" -->
 
 # Evaluation: Crash-focussed
 

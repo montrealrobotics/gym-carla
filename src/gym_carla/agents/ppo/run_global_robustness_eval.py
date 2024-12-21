@@ -25,9 +25,9 @@ def run_global_robustness_eval(eval_seed, post_train_policy_seeds_path, eval_sav
     for seed_dir in seed_paths:
         post_train_policy_path = Path(post_train_policy_seeds_path).joinpath(seed_dir).joinpath("policy.ppo_model")
         episodic_rewards, episodic_lens = evaluate_policy(eval_seed, post_train_policy_path, env_cfg, num_eval_episodes, port)
-        Path(f"{eval_save_path}/{seed_dir}").mkdir(parents=True, exist_ok=True)
-        np.save(f"{eval_save_path}/{seed_dir}/test_episodic_return.npy", np.array(episodic_rewards))
-        np.save(f"{eval_save_path}/{seed_dir}/test_episodic_lens.npy", np.array(episodic_lens))
+        Path(f"{eval_save_path}/{seed_dir}/eval_seed={eval_seed}").mkdir(parents=True, exist_ok=True)
+        np.save(f"{eval_save_path}/{seed_dir}/eval_seed={eval_seed}/test_episodic_return.npy", np.array(episodic_rewards))
+        np.save(f"{eval_save_path}/{seed_dir}/eval_seed={eval_seed}/test_episodic_lens.npy", np.array(episodic_lens))
 
 
 def main():
@@ -45,7 +45,11 @@ def main():
                             "num_eval_episodes": args.num_eval_episodes
                             }
 
-    eval_save_path = Path("./results").joinpath(args.exp_name).joinpath("evals").joinpath("global_robustness_eval")
+    policy_path_no_exp_folder = "/".join(args.policy_seeds_path.split("results")[1].split("/")[2:])
+    eval_save_path = Path("./results").joinpath(args.exp_name).joinpath("evals").joinpath("global_robustness_eval").joinpath(policy_path_no_exp_folder)
+    eval_save_path.mkdir(parents=True, exist_ok=True)
+    print("Eval safe path: ", eval_save_path)
+    
     run_global_robustness_eval(args.eval_seed, args.policy_seeds_path, eval_save_path, args.env_cfg_yaml, args.num_eval_episodes, port)
     with open(eval_save_path.joinpath('eval_config.yaml'), 'w') as file:
         yaml.dump(experiment_config_dict, file)

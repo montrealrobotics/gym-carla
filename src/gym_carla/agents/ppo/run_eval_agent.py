@@ -78,7 +78,7 @@ def rollout_agent(seed, env_id, town, port, max_steps, num_episodes, num_scenari
                 print("Collision!")
                 collision_scenarios.append(info["vehicle_history"])
                 # save_video(obs, [0], [ep_len], 1, eval_save_path + "/collision", prefix=f"ep_{ep}")
-        print("Gathered ", len(collision_scenarios), "collision scenarios out of", num_scenarios)
+        print("Gathered ", len(collision_scenarios), "collision scenarios")
         ep += 1
         
     return episodic_rewards, episodic_lens, collision_scenarios
