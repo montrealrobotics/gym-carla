@@ -1,4 +1,8 @@
-"""Policies: abstract base class and concrete implementations."""
+# This code is derived from carla-roach
+# Authors: Zhang, Zhejun and Liniger, Alexander and Dai, Dengxin and Yu, Fisher and Van Gool, Luc
+# URL: https://github.com/zhejz/carla-roach
+# License: CC BY-NC 4.0 (Attribution-NonCommercial 4.0 International)
+
 
 import torch as th
 import torch.nn as nn
