@@ -39,7 +39,6 @@ import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 
 from gym_carla.agents.birdview.birdview_wrapper import BirdviewWrapper
-from gym_carla.envs.misc import CarlaDummVecEnv
 from gym_carla.agents.ppo.ppo_policy import PpoPolicy
 from gym_carla.envs.misc import CarlaDummVecEnv, save_video
 from hydra.core.hydra_config import HydraConfig
@@ -48,6 +47,7 @@ import hydra
 from pathlib import Path
 import time
 import logging
+import pickle as pkl
 
 log = logging.getLogger(__name__)
 
@@ -116,6 +116,21 @@ def make_env(
     return env
 
 
+def save_model(policy, optimizer, trainer_cfg, path):
+    policy_state_dict = policy.state_dict()
+    policy_init_kwargs = policy.get_init_kwargs()
+    torch.save(
+        {
+            'policy_state_dict': policy_state_dict,
+            'policy_init_kwargs': policy_init_kwargs,
+            'optimizer_state_dict': optimizer.state_dict(),
+            # 'scheduler_state_dict': self.scheduler.state_dict(),
+            'trainer_init_kwargs': trainer_cfg,
+        },
+        path
+    )
+
+
 def run_single_experiment(cfg, seed, save_path, port):
     exp_name = os.path.basename(__file__)[: -len(".py")]
     cfg.agent.batch_size = int(cfg.num_envs * cfg.num_steps)
@@ -133,14 +148,24 @@ def run_single_experiment(cfg, seed, save_path, port):
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() and cfg.cuda else "cpu")
-    # device = "cpu"
 
     # TODO: eventually we want many envs!!
     # enforcing that max steps are more than num steps here
     env = CarlaDummVecEnv([lambda env_name=env_name: make_env(env_name=env_name, town=env_town, port=port, seed=seed, max_time_episode=max_steps, number_of_vehicles=num_vehicles) for env_name, env_town, port, max_steps, num_vehicles  in [(cfg.env_id, cfg.town, port, cfg.num_steps-1, cfg.num_vehicles)]])
     # env = DummyVecEnv([make_env(env_name=cfg.env_id, town=cfg.town)])
     
-    agent = PpoPolicy(env.observation_space, env.action_space, distribution_kwargs=cfg.agent.distribution_kwargs).to(device)
+
+    collision_scenarios = []
+    if(cfg.phase=="post_train"):
+        print("We are post-training: Loading base training collisions and base model...")
+        # model_path = Path(save_path).joinpath(f"base_train_policy.ppo_model")
+        model_path = Path(cfg.model_and_data_dir).joinpath("policy.ppo_model")
+        agent = PpoPolicy.load(model_path)[0]
+        scenarios_path = Path(cfg.model_and_data_dir).joinpath("train_crash_scenarios.pkl")
+        with open(scenarios_path, 'rb') as f:
+            collision_scenarios = pkl.load(f)
+    else:
+        agent = PpoPolicy(env.observation_space, env.action_space, distribution_kwargs=cfg.agent.distribution_kwargs).to(device)
 
     optimizer = optim.Adam(agent.parameters(), lr=cfg.agent.learning_rate, eps=1e-5)
 
@@ -168,15 +193,14 @@ def run_single_experiment(cfg, seed, save_path, port):
 
     kl_early_stop = 0
     t_train_values = 0.0
-
-    collision_scenarios = []
+    
     episodic_rewards_list = []
     episodic_lens_list = []
     next_obs = env.reset()
     for iteration in range(1, num_iterations + 1):
         
         next_done = torch.zeros(env.num_envs).to(device)
-        print("Iteration:", iteration)
+        print("Iteration:", iteration, "/", num_iterations)
         # Annealing the rate if instructed to do so.
         if cfg.agent.anneal_lr:
             frac = 1.0 - (iteration - 1.0) / num_iterations
@@ -196,7 +220,15 @@ def run_single_experiment(cfg, seed, save_path, port):
             dones[step] = next_done
             if next_done:
                 # Do this with probability p
-                if len(collision_scenarios) > cfg.min_collision_scenes and random.random() < cfg.p:
+                # if len(collision_scenarios) > cfg.min_collision_scenes and random.random() < cfg.p:
+                #     log.info(f"Reset to collision scenario. Step: {global_step}")
+                #     next_obs = env.reset(vehicle_positions=random.choice(collision_scenarios))
+                #     collision_scenario = True
+                #     collision_scenario_idx.append(step)
+                # else:
+                #     collision_scenario = False
+                
+                if (cfg.phase=="post_train") and (cfg.reset==True) and random.random() < cfg.p:
                     log.info(f"Reset to collision scenario. Step: {global_step}")
                     next_obs = env.reset(vehicle_positions=random.choice(collision_scenarios))
                     collision_scenario = True
@@ -370,12 +402,14 @@ def run_single_experiment(cfg, seed, save_path, port):
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
     print("Saving these returns:", np.array(episodic_rewards_list))
-    np.save(f"{save_path}/episodic_rewards.npy", np.array(episodic_rewards_list))
-    np.save(f"{save_path}/episodic_lens.npy", np.array(episodic_lens_list))
+    np.save(f"{save_path}/train_episodic_rewards.npy", np.array(episodic_rewards_list))
+    np.save(f"{save_path}/train_episodic_lens.npy", np.array(episodic_lens_list))
+    with open(f"{save_path}/train_crash_scenarios.pkl", 'wb') as f:
+        pkl.dump(collision_scenarios, f)
 
     if cfg.save_model:
-        model_path = f"{save_path}/policy.cleanrl_model"
-        torch.save(agent.state_dict(), model_path)
+        model_path = f"{save_path}/policy.ppo_model"
+        save_model(agent, optimizer, cfg, model_path)
         print(f"model saved to {model_path}")
         
         # from cleanrl_utils.evals.ppo_eval import evaluate
@@ -398,13 +432,26 @@ def run_single_experiment(cfg, seed, save_path, port):
     
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def run_experiment(cfg: DictConfig) -> None:
+
+    if(cfg.phase == "base_train"):
+        assert((cfg.p==0.0) and (not cfg.reset))
+        
+    elif(cfg.phase == "post_train"):
+        if(cfg.reset):
+            assert(cfg.p > 0)
+        else:
+            assert(cfg.p == 0)
+    else:
+        raise NotImplementedError("Phase specified not implented")
+
+    print("Start running the experiment ...")
     print(OmegaConf.to_yaml(cfg))
     save_path = HydraConfig.get().runtime.output_dir
     print(">>> Storing outputs in: ", save_path)
     os.makedirs(save_path, exist_ok=True) # TODO: where we'll store results. we need to decide on which stats.
-    os.makedirs(save_path + "/collision", exist_ok=True)
+    os.makedirs(save_path + "/train_collision_videos", exist_ok=True)
     
-    result_file = Path(save_path).joinpath("episodic_rewards.npy")
+    result_file = Path(save_path).joinpath("train_episodic_rewards.npy")
     if not(result_file.is_file()): # if results aren't there already
         
         num_gpus = len(cfg.gpu_ids)

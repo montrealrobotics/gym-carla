@@ -32,17 +32,18 @@ class CarlaDummVecEnv(DummyVecEnv):
       self.envs[env_idx].clean()
 
 
-def save_video(observations, start_idxs, ep_lengths, save_n, save_path):
+def save_video(observations, start_idxs, ep_lengths, save_n, save_path, prefix=None):
   start_ep = max(len(start_idxs)-save_n, 0)
   for i, start_step in enumerate(start_idxs[start_ep:]):
     ep = i+start_ep
+    file_name = f"ep_{ep}" if prefix is None else f"{prefix}_{ep}"
     images = [observations[start_step+j, 0].cpu().numpy().astype(np.uint8) for j in range(ep_lengths[ep])]
     width, height = images[0].shape[:2]
-    out = cv2.VideoWriter(f"{save_path}/ep_{ep}.mp4", cv2.VideoWriter_fourcc(*'mp4v'), 10, (width, height))
+    out = cv2.VideoWriter(f"{save_path}/{file_name}.mp4", cv2.VideoWriter_fourcc(*'mp4v'), 10, (width, height))
     for img in images:
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         out.write(img)
-    print(f"Saving video to {save_path}/ep_{ep}.mp4")
+    print(f"Saving video to {save_path}/{file_name}.mp4")
     out.release()
        
 

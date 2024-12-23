@@ -6,8 +6,9 @@ defaults:
 hydra:
   launcher:
     n_jobs: 1
+    # pre_dispatch: 2
   sweep:
-    dir: results/default_experiment
+    dir: results/${exp_name}/phase_${phase}/reset_${reset}
     subdir: ${hydra.job.override_dirname}/seed=${seed}
   job:
     config:
@@ -17,8 +18,17 @@ hydra:
         exclude_keys:
           - seed
           - gpu_ids
+          - num_test_episodes
+          - num_test_steps
+          - num_test_scenarios
+          - test_on_collisions
+          - phase
+          - total_timesteps
+          - model_and_data_dir
+          - reset
+          - exp_name
 
-
+exp_name: experiment_name
 seed: 1
 torch_deterministic: true
 cuda: true
@@ -26,12 +36,18 @@ save_model: true
 town: "Town03"
 env_id: "carla-bev-v0"
 num_envs: 1
-num_steps: 256
-total_timesteps: 1024
+num_steps: 1024
+total_timesteps: 2048
 num_iterations: 0
 gpu_ids: [0]
 save_last_n: 2
 save_video: true
-num_vehicles: 25
-p: 0.5
+num_vehicles: 40
 min_collision_scenes: 20
+
+phase: base_train #post_train or base_train
+
+# post training specific : DO NOT CHANGE THE DEFAULTS IN THE FILE
+model_and_data_dir: ""
+reset: false
+p: 0.0
